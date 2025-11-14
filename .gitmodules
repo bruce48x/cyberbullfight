@@ -1,0 +1,3 @@
+[submodule "echo/server-skynet/skynet"]
+	path = echo/server-skynet/skynet
+	url = https://github.com/cloudwu/skynet.git
