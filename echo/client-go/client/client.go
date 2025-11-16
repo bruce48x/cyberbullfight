@@ -13,16 +13,16 @@ import (
 )
 
 const (
-	NetStateInited   = 0
-	NetStateWaitAck  = 1
-	NetStateWorking  = 2
-	NetStateClosed   = 3
+	NetStateInited  = 0
+	NetStateWaitAck = 1
+	NetStateWorking = 2
+	NetStateClosed  = 3
 )
 
 const (
-	ResponseOK         = 200
-	ResponseFail       = 500
-	ResponseOldClient  = 501
+	ResponseOK        = 200
+	ResponseFail      = 500
+	ResponseOldClient = 501
 )
 
 const (
@@ -51,30 +51,30 @@ type HandshakeResponse struct {
 }
 
 type PinusTcpClient struct {
-	host    string
-	port    int
-	userId  string
-	conn    net.Conn
+	host     string
+	port     int
+	userId   string
+	conn     net.Conn
 	netState int
 
 	// Read state
-	readState    int
-	headBuffer   []byte
-	headOffset   int
+	readState     int
+	headBuffer    []byte
+	headOffset    int
 	packageBuffer []byte
 	packageOffset int
 	packageSize   int
 
 	// Heartbeat
-	heartbeatInterval time.Duration
-	heartbeatTimeout  time.Duration
-	heartbeatTimer    *time.Timer
+	heartbeatInterval     time.Duration
+	heartbeatTimeout      time.Duration
+	heartbeatTimer        *time.Timer
 	heartbeatTimeoutTimer *time.Timer
-	nextHeartbeatTimeout time.Time
+	nextHeartbeatTimeout  time.Time
 
 	// Request/Response
-	reqId     uint32
-	callbacks map[uint32]func(interface{})
+	reqId         uint32
+	callbacks     map[uint32]func(interface{})
 	callbackMutex sync.Mutex
 
 	// Protocol
@@ -98,14 +98,14 @@ type ClientOptions struct {
 
 func NewPinusTcpClient(opts ClientOptions) *PinusTcpClient {
 	return &PinusTcpClient{
-		host:         opts.Host,
-		port:         opts.Port,
-		userId:       opts.UserId,
-		netState:     NetStateInited,
-		readState:    ReadStateHead,
-		headBuffer:   make([]byte, protocol.HEAD_SIZE),
-		headOffset:   0,
-		callbacks:    make(map[uint32]func(interface{})),
+		host:          opts.Host,
+		port:          opts.Port,
+		userId:        opts.UserId,
+		netState:      NetStateInited,
+		readState:     ReadStateHead,
+		headBuffer:    make([]byte, protocol.HEAD_SIZE),
+		headOffset:    0,
+		callbacks:     make(map[uint32]func(interface{})),
 		handshakeChan: make(chan *HandshakeResponse, 1),
 		messageChan:   make(chan *protocol.Message, 100),
 		errorChan:     make(chan error, 10),
@@ -132,7 +132,7 @@ func (c *PinusTcpClient) Connect() error {
 	handshakeJSON, _ := json.Marshal(handshakeData)
 	handshakeBody := protocol.StrEncode(string(handshakeJSON))
 	handshakePkg := protocol.EncodePackage(protocol.TYPE_HANDSHAKE, handshakeBody)
-	
+
 	if _, err := c.conn.Write(handshakePkg); err != nil {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
@@ -150,7 +150,7 @@ func (c *PinusTcpClient) Connect() error {
 			return fmt.Errorf("handshake fail: code=%d", resp.Code)
 		}
 		c.handleHandshakeResponse(resp)
-		
+
 		// Send handshake ack
 		ackPkg := protocol.EncodePackage(protocol.TYPE_HANDSHAKE_ACK, nil)
 		if _, err := c.conn.Write(ackPkg); err != nil {
@@ -457,14 +457,13 @@ func (c *PinusTcpClient) encode(route string, msg interface{}) ([]byte, error) {
 	return json.Marshal(msg)
 }
 
-func (c *PinusTcpClient) compressRoute(route string) (string, bool) {
+func (c *PinusTcpClient) compressRoute(route string) (uint16, bool) {
 	if c.dict != nil {
 		if abbr, ok := c.dict[route]; ok {
-			// Return as 2-byte string representing uint16
-			return string([]byte{byte(abbr >> 8), byte(abbr)}), true
+			return abbr, true
 		}
 	}
-	return route, false
+	return 0, false
 }
 
 func (c *PinusTcpClient) Request(route string, msg interface{}) (interface{}, error) {
@@ -483,13 +482,16 @@ func (c *PinusTcpClient) Request(route string, msg interface{}) (interface{}, er
 
 	// Compress route
 	compressedRoute, compressRoute := c.compressRoute(route)
-	
+
 	// Encode message
-	encodedMsg := protocol.EncodeMessage(reqId, protocol.TYPE_REQUEST, compressRoute, compressedRoute, encodedBody)
-	
+	encodedMsg, err := protocol.EncodeMessage(reqId, protocol.TYPE_REQUEST, compressRoute, route, compressedRoute, encodedBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode message: %w", err)
+	}
+
 	// Encode package
 	pkg := protocol.EncodePackage(protocol.TYPE_DATA, encodedMsg)
-	
+
 	// Send
 	if _, err := c.conn.Write(pkg); err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -526,13 +528,16 @@ func (c *PinusTcpClient) Notify(route string, msg interface{}) error {
 
 	// Compress route
 	compressedRoute, compressRoute := c.compressRoute(route)
-	
+
 	// Encode message
-	encodedMsg := protocol.EncodeMessage(0, protocol.TYPE_NOTIFY, compressRoute, compressedRoute, encodedBody)
-	
+	encodedMsg, err := protocol.EncodeMessage(0, protocol.TYPE_NOTIFY, compressRoute, route, compressedRoute, encodedBody)
+	if err != nil {
+		return fmt.Errorf("failed to encode message: %w", err)
+	}
+
 	// Encode package
 	pkg := protocol.EncodePackage(protocol.TYPE_DATA, encodedMsg)
-	
+
 	// Send
 	_, err = c.conn.Write(pkg)
 	return err
@@ -551,4 +556,3 @@ func (c *PinusTcpClient) Disconnect() {
 		c.conn = nil
 	}
 }
-

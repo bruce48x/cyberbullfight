@@ -3,3 +3,6 @@ logs
 .tsbuildinfo
 *.so
 luaclib
+echo/client-go/client-go
+.vscode/*
+!.vscode/launch.json
