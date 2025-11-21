@@ -25,7 +25,7 @@ function HandshakeHandler:handleHandshake(session, body)
 
     -- Prepare handshake response
     local sys_data = {
-        heartbeat = 30, -- seconds
+        heartbeat = 10, -- seconds
         dict = {}, -- Route dictionary (empty for now)
         protos = { -- Protobuf definitions (empty for now)
             client = {},
@@ -47,14 +47,14 @@ function HandshakeHandler:handleHandshake(session, body)
 
     session.connState = ConnectionState.ST_WAIT_ACK
 
-    -- -- Initialize heartbeat if needed
-    -- -- TypeScript: heartbeat * 1000 (milliseconds)
-    -- -- Skynet: skynet.timeout uses centiseconds, so heartbeat * 100
-    -- -- Pinus default: heartbeatTimeout = heartbeatInterval * 2 (same as pinus/lib/connectors/commands/heartbeat.ts)
-    -- if sys_data.heartbeat > 0 then
-    --     session.heartbeatInterval = sys_data.heartbeat * 100 -- Convert seconds to centiseconds
-    --     session.heartbeatTimeout = session.heartbeatInterval * 2 -- Default is 2x heartbeat interval (as per pinus source)
-    -- end
+    -- Initialize heartbeat if needed
+    -- TypeScript: heartbeat * 1000 (milliseconds)
+    -- Skynet: skynet.timeout uses centiseconds, so heartbeat * 100
+    -- Pinus default: heartbeatTimeout = heartbeatInterval * 2 (same as pinus/lib/connectors/commands/heartbeat.ts)
+    if sys_data.heartbeat > 0 then
+        session.heartbeatInterval = sys_data.heartbeat * 100 -- Convert seconds to centiseconds
+        session.heartbeatTimeout = session.heartbeatInterval * 2 -- Default is 2x heartbeat interval (as per pinus source)
+    end
 end
 
 ---@param session Session

@@ -413,37 +413,74 @@ func (c *PinusTcpClient) startHeartbeat() {
 	if c.heartbeatInterval <= 0 {
 		return
 	}
-	c.triggerHeartbeat()
+	// Start the first heartbeat cycle
+	c.scheduleNextHeartbeat()
 }
 
+// scheduleNextHeartbeat schedules the next heartbeat to be sent
+func (c *PinusTcpClient) scheduleNextHeartbeat() {
+	if c.heartbeatInterval <= 0 {
+		return
+	}
+
+	// Stop existing heartbeat timer if any
+	if c.heartbeatTimer != nil {
+		c.heartbeatTimer.Stop()
+		c.heartbeatTimer = nil
+	}
+
+	// Schedule next heartbeat send
+	c.heartbeatTimer = time.AfterFunc(c.heartbeatInterval, func() {
+		c.heartbeatTimer = nil
+		// Send heartbeat
+		heartbeatPkg := protocol.EncodePackage(protocol.TYPE_HEARTBEAT, nil)
+		if c.conn != nil {
+			c.conn.Write(heartbeatPkg)
+		}
+		// Set timeout check
+		c.nextHeartbeatTimeout = time.Now().Add(c.heartbeatTimeout)
+		c.scheduleHeartbeatTimeout()
+		// Schedule next heartbeat
+		c.scheduleNextHeartbeat()
+	})
+}
+
+// scheduleHeartbeatTimeout schedules the heartbeat timeout check
+func (c *PinusTcpClient) scheduleHeartbeatTimeout() {
+	// Stop existing timeout timer if any
+	if c.heartbeatTimeoutTimer != nil {
+		c.heartbeatTimeoutTimer.Stop()
+		c.heartbeatTimeoutTimer = nil
+	}
+
+	// Schedule timeout check
+	c.heartbeatTimeoutTimer = time.AfterFunc(c.heartbeatTimeout, func() {
+		c.heartbeatTimeoutTimer = nil
+		// Check if we've exceeded the timeout
+		gap := time.Until(c.nextHeartbeatTimeout)
+		if gap > gapThreshold*time.Millisecond {
+			// Reschedule for the remaining time
+			c.heartbeatTimeoutTimer = time.AfterFunc(gap, func() {
+				log.Printf("tcp heartbeat timeout")
+			})
+		} else {
+			log.Printf("tcp heartbeat timeout")
+		}
+	})
+}
+
+// triggerHeartbeat is called when we receive a heartbeat from server
+// It resets the heartbeat sending timer and timeout check timer
 func (c *PinusTcpClient) triggerHeartbeat() {
 	if c.heartbeatInterval <= 0 {
 		return
 	}
 
-	if c.heartbeatTimer != nil {
-		c.heartbeatTimer.Stop()
-	}
-	if c.heartbeatTimeoutTimer != nil {
-		c.heartbeatTimeoutTimer.Stop()
-	}
-
-	c.heartbeatTimer = time.AfterFunc(c.heartbeatInterval, func() {
-		heartbeatPkg := protocol.EncodePackage(protocol.TYPE_HEARTBEAT, nil)
-		c.conn.Write(heartbeatPkg)
-		c.nextHeartbeatTimeout = time.Now().Add(c.heartbeatTimeout)
-		c.heartbeatTimeoutTimer = time.AfterFunc(c.heartbeatTimeout, func() {
-			gap := time.Until(c.nextHeartbeatTimeout)
-			if gap > gapThreshold*time.Millisecond {
-				c.heartbeatTimeoutTimer = time.AfterFunc(gap, func() {
-					log.Printf("tcp heartbeat timeout")
-				})
-			} else {
-				log.Printf("tcp heartbeat timeout")
-			}
-		})
-		c.triggerHeartbeat()
-	})
+	// Reset heartbeat sending timer (clear old, schedule new)
+	c.scheduleNextHeartbeat()
+	
+	// Reset timeout check timer (clear old, schedule new)
+	c.scheduleHeartbeatTimeout()
 }
 
 func (c *PinusTcpClient) encode(route string, msg interface{}) ([]byte, error) {

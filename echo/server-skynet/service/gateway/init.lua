@@ -2,10 +2,6 @@ local skynet = require "skynet"
 local socket = require "skynet.socket"
 ---@type PomeloProtocol
 local protocol = require "pomelo_protocol"
-local helloHandler = require "handlers.hello"
-
-local handlers = {}
-handlers[helloHandler.route] = helloHandler.handler
 
 local sessions = {}
 

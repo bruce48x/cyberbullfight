@@ -27,6 +27,7 @@ local function process(fd)
     socket.start(fd)
 
     session.fd = fd
+    session.heartbeatTimerSeq = 0
 
     local handler = protocol.createHandler({
         session = session,

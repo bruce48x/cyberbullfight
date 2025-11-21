@@ -427,6 +427,8 @@ function M.createHandler(opts)
     opts = opts or {}
     local handler = ProtocolHandler:new()
     handler.session = opts.session
+    handler.session.heartbeatTimeout = handler.heartbeatTimeout
+    handler.session.heartbeatInterval = handler.heartbeatInterval
 
     -- Set callbacks
     handler.sendCallback = opts.sendCallback or function(data)
