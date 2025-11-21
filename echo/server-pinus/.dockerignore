@@ -1,5 +1,7 @@
-*.md
-README*
+node_modules
+npm-debug.log
+yarn-error.log
+*.log
 .git
 .gitignore
 .vscode
@@ -9,5 +11,7 @@ README*
 *~
 .DS_Store
 Thumbs.db
+README.md
 .env
 .env.local
+

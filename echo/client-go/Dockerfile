@@ -1,7 +1,7 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.19 AS builder
 
-WORKDIR /build
+WORKDIR /app
 
 # Copy go mod files
 COPY go.mod go.sum* ./
@@ -13,16 +13,5 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o client-go .
 
-# Final stage
-FROM alpine:latest
-
-RUN apk --no-cache add ca-certificates
-
-WORKDIR /app
-
-# Copy binary from builder
-COPY --from=builder /build/client-go .
-
 # Run the application
 CMD ["./client-go"]
-

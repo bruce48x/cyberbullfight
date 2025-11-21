@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  server-pinus:
+    build:
+      context: ./server-pinus
+      dockerfile: Dockerfile
+    container_name: cyberbullfight-server-pinus
+    ports:
+      - "3010:3010"
+    networks:
+      - cyberbullfight-network
+    restart: unless-stopped
+
+  server-skynet:
+    build:
+      context: ./server-skynet
+      dockerfile: Dockerfile
+    container_name: cyberbullfight-server-skynet
+    ports:
+      - "3011:3010"
+    networks:
+      - cyberbullfight-network
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: cyberbullfight-client
+    environment:
+      - HOST=server-pinus
+      - PORT=3010
+    depends_on:
+      - server-pinus
+    networks:
+      - cyberbullfight-network
+    restart: unless-stopped
+
+  client-go:
+    build:
+      context: ./client-go
+      dockerfile: Dockerfile
+    container_name: cyberbullfight-client-go
+    environment:
+      - HOST=server-pinus
+      - PORT=3010
+    depends_on:
+      - server-pinus
+    networks:
+      - cyberbullfight-network
+    restart: unless-stopped
+
+networks:
+  cyberbullfight-network:
+    driver: bridge
+
