@@ -316,6 +316,14 @@ function ProtocolHandler:handleData(body)
         return
     end
 
+    -- Receiving any data from client proves the connection is alive,
+    -- so refresh heartbeat timestamp to avoid false positives when
+    -- the client is actively sending requests but hasn't sent a
+    -- heartbeat packet yet.
+    if self.session and self.session.connState == ConnectionState.ST_WORKING then
+        self.session.lastHeartbeatTime = skynet.now()
+    end
+
     local msg = message.decode(body) -- M.Message.decode(body)
     if not msg then
         skynet.error("[protocol] Failed to decode message, body length=" .. #body)
