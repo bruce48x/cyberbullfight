@@ -1,0 +1,15 @@
+node_modules
+logs
+*.tsbuildinfo
+*.so
+luaclib/*
+!luaclib/.gitkeep
+echo/client-go/client-go
+.vscode/*
+!.vscode/launch.json
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform

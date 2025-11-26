@@ -1,0 +1,16 @@
+.git
+.gitignore
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+README.md
+*.md
+# Exclude pre-built binaries to ensure they're built in the container
+skynet/skynet
+skynet/cservice/*.so
+skynet/luaclib/*.so
+
