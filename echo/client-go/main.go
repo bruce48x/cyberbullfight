@@ -5,14 +5,40 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"os/signal"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"client-go/client"
 )
 
+var (
+	totalRequests int64
+	successCount  int64
+	failCount     int64
+)
+
+func printStats() {
+	log.Printf("\n========== 统计信息 ==========")
+	log.Printf("总请求数: %d", atomic.LoadInt64(&totalRequests))
+	log.Printf("成功: %d", atomic.LoadInt64(&successCount))
+	log.Printf("失败: %d", atomic.LoadInt64(&failCount))
+	log.Printf("==============================\n")
+}
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
+
+	// 捕获退出信号
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		printStats()
+		os.Exit(0)
+	}()
 
 	count := getIntEnv("COUNT", 1)
 	log.Printf("Starting %d robot(s)...", count)
@@ -69,10 +95,13 @@ func runRobot(index int) {
 			"data": fmt.Sprintf("world%d", reqId),
 		}
 		reqId++
+		atomic.AddInt64(&totalRequests, 1)
 		res, err := cli.Request("connector.entryHandler.hello", msg)
 		if err != nil {
+			atomic.AddInt64(&failCount, 1)
 			log.Printf("Robot %d request failed: %v", index, err)
 		} else {
+			atomic.AddInt64(&successCount, 1)
 			log.Printf("Robot %d userId: %s, 发送: %v, 收到响应: %v", index, userId, msg, res)
 		}
 	}

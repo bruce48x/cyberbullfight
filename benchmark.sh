@@ -180,6 +180,7 @@ start_monitor "${NAME}"
 # 4. 停止容器
 echo "[4/4] 停止容器..."
 docker stop "$NAME"
+docker logs -n 100 "$NAME"
 docker rm "$NAME"
 trap - EXIT
 

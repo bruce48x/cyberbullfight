@@ -60,7 +60,7 @@ resource "alicloud_instance" "instance" {
   vswitch_id                 = alicloud_vswitch.vsw.id
   internet_max_bandwidth_out = 100
   user_data = templatefile("${path.module}/scripts/init.sh", {
-    DOCKER_MIRROR = "bruce48li/cyberbullfight-server-go:latest"
+    DOCKER_MIRROR = "bruce48li/cyberbullfight-server-go"
   })
   image_options {
     login_as_non_root = true

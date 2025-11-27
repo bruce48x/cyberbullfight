@@ -13,7 +13,7 @@ apt autoremove -y
 passwd -d ecs-user
 
 echo "ssh 设置"
-sed -i "s/^#.*ClientAliveInterval.*/ClientAliveInterval 60/" /etc/ssh/sshd_config
+sed -i "s/^#.*ClientAliveInterval.*/ClientAliveInterval 600/" /etc/ssh/sshd_config
 sed -i "s/^#.*ClientAliveCountMax.*/ClientAliveCountMax 3/" /etc/ssh/sshd_config
 sed -i "s/^#.*PubkeyAuthentication.*/PubkeyAuthentication yes/" /etc/ssh/sshd_config
 sed -i "s/.*PasswordAuthentication.*/PasswordAuthentication no/" /etc/ssh/sshd_config
@@ -44,6 +44,4 @@ su ecs-user -c "chsh -s $(which zsh)"
 echo "完成"
 
 # 提前拉取镜像
-if [ -n "$DOCKER_MIRROR" ]; then
-  docker pull "${DOCKER_MIRROR}"
-fi
+docker pull "${DOCKER_MIRROR}"
