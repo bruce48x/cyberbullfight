@@ -1,19 +1,19 @@
 services:
-  server-pinus:
-    image: bruce48li/cyberbullfight-server-pinus:latest
-    container_name: cyberbullfight-server-pinus
+  server:
+    image: bruce48li/cyberbullfight-server-go:latest
+    environment:
+      - TZ=Asia/Shanghai
     ports:
       - "3010:3010"
     networks:
       - cyberbullfight-network
-  client-go:
+  client:
     image: bruce48li/cyberbullfight-client-go:latest
-    container_name: cyberbullfight-client-go
     environment:
-      - HOST=server-pinus
-      - PORT=3010
+      - TZ=Asia/Shanghai
+      - SERVER_HOST=server
     depends_on:
-      - server-pinus
+      - server
     networks:
       - cyberbullfight-network
 

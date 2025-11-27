@@ -34,7 +34,7 @@ func main() {
 
 	// Register handlers
 	session.RegisterHandler("connector.entryHandler.hello", func(route string, body map[string]interface{}) map[string]interface{} {
-		log.Printf("[handler] hello called. route: %s, body: %v", route, body)
+		// log.Printf("[handler] hello called. route: %s, body: %v", route, body)
 		return map[string]interface{}{
 			"code": 0,
 			"msg":  body,
@@ -58,4 +58,3 @@ func init() {
 	// Initialize protocol
 	_ = protocol.Package{}
 }
-

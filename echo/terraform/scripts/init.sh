@@ -8,7 +8,7 @@ apt install -y vim
 apt install -y wget
 apt install -y curl
 apt install -y git
-apt autoremove
+apt autoremove -y
 
 passwd -d ecs-user
 

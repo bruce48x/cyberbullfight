@@ -5,17 +5,32 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"client-go/client"
 )
 
 func main() {
-	// Generate random user ID
 	rand.Seed(time.Now().UnixNano())
+
+	count := getIntEnv("COUNT", 1)
+	log.Printf("Starting %d robot(s)...", count)
+
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			runRobot(index)
+		}(i + 1)
+	}
+	wg.Wait()
+}
+
+func runRobot(index int) {
 	userId := generateRandomID()
 
-	// Create client
 	opts := client.ClientOptions{
 		Host:   getEnv("SERVER_HOST", "127.0.0.1"),
 		Port:   getIntEnv("SERVER_PORT", 3010),
@@ -24,15 +39,14 @@ func main() {
 
 	cli := client.NewPinusTcpClient(opts)
 
-	// Connect with retry (max 10 attempts, 5 second interval)
 	maxRetries := 10
 	retryInterval := 5 * time.Second
 	var connected bool
 	for i := 0; i < maxRetries; i++ {
 		if err := cli.Connect(); err != nil {
-			log.Printf("Connection attempt %d/%d failed: %v", i+1, maxRetries, err)
+			log.Printf("Robot %d connection attempt %d/%d failed: %v", index, i+1, maxRetries, err)
 			if i < maxRetries-1 {
-				log.Printf("Retrying in %v...", retryInterval)
+				log.Printf("Robot %d retrying in %v...", index, retryInterval)
 				time.Sleep(retryInterval)
 			}
 		} else {
@@ -41,23 +55,25 @@ func main() {
 		}
 	}
 	if !connected {
-		log.Fatalf("Failed to connect after %d attempts", maxRetries)
+		log.Printf("Robot %d failed to connect after %d attempts", index, maxRetries)
+		return
 	}
-	log.Printf("Connected with userId: %s", userId)
+	log.Printf("Robot %d connected with userId: %s", index, userId)
 
-	// Send periodic requests
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+	reqId := 1
 	for range ticker.C {
 		msg := map[string]interface{}{
-			"data": "world",
+			"data": fmt.Sprintf("world%d", reqId),
 		}
+		reqId++
 		res, err := cli.Request("connector.entryHandler.hello", msg)
 		if err != nil {
-			log.Printf("Request failed: %v", err)
+			log.Printf("Robot %d request failed: %v", index, err)
 		} else {
-			log.Printf("userId: %s, 发送: %v, 收到响应: %v", userId, msg, res)
+			log.Printf("Robot %d userId: %s, 发送: %v, 收到响应: %v", index, userId, msg, res)
 		}
 	}
 }
