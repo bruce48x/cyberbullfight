@@ -1,4 +1,4 @@
-thread = 8
+thread = 2
 cpath = "./skynet/cservice/?.so"
 bootstrap = "snlua bootstrap"
 

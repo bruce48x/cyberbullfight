@@ -1,6 +1,6 @@
 services:
   server:
-    image: bruce48li/cyberbullfight-server-go:latest
+    image: bruce48li/cyberbullfight-server-cs
     environment:
       - TZ=Asia/Shanghai
     ports:
@@ -8,7 +8,7 @@ services:
     networks:
       - cyberbullfight-network
   client:
-    image: bruce48li/cyberbullfight-client-go:latest
+    image: bruce48li/cyberbullfight-client-go
     environment:
       - TZ=Asia/Shanghai
       - SERVER_HOST=server

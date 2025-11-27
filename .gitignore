@@ -8,6 +8,10 @@ echo/client-go/client-go
 .vscode/*
 !.vscode/launch.json
 
+# .NET
+bin/
+obj/
+
 # Terraform
 *.tfstate
 *.tfstate.*

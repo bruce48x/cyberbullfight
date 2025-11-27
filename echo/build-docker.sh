@@ -40,6 +40,7 @@ build_image "client-js" "./client-js/Dockerfile"
 build_image "client-go" "./client-go/Dockerfile"
 build_image "server-skynet" "./server-skynet/Dockerfile"
 build_image "server-go" "./server-go/Dockerfile"
+build_image "server-cs" "./server-cs/Dockerfile"
 
 echo -e "${GREEN}所有镜像构建完成！${NC}"
 echo -e "\n${BLUE}使用以下命令查看镜像：${NC}"
