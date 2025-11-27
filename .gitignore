@@ -8,6 +8,9 @@ echo/client-go/client-go
 .vscode/*
 !.vscode/launch.json
 
+# cpp
+**/build/
+
 # .NET
 bin/
 obj/
