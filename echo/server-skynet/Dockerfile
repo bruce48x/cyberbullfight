@@ -1,5 +1,5 @@
 # Build stage
-FROM debian:13.2
+FROM debian:13.2 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -22,6 +22,12 @@ RUN make linux
 # Build cjson for the application
 WORKDIR /app
 RUN make
+
+FROM debian:13.2-slim
+
+WORKDIR /app
+
+COPY --from=builder /app .
 
 # Expose port (adjust if needed)
 EXPOSE 3010

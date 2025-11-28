@@ -8,8 +8,12 @@ echo/client-go/client-go
 .vscode/*
 !.vscode/launch.json
 
+# IDE
+.idea/
+
 # cpp
 **/build/
+cmake-build-debug-wsl
 
 # .NET
 bin/

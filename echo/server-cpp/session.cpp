@@ -34,7 +34,7 @@ void Session::run() {
     while (running_) {
         ssize_t n = recv(socket_fd_, buffer.data(), buffer.size(), 0);
         if (n <= 0) {
-            std::cout << "[session] Connection closed by client\n";
+            std::cout << "[session] Connection closed by client" << std::endl;
             break;
         }
 
@@ -117,7 +117,7 @@ void Session::handle_data(const std::vector<uint8_t>& body) {
 
     auto msg = protocol::Message::decode(body);
     if (!msg) {
-        std::cout << "[session] Failed to decode message\n";
+        std::cout << "[session] Failed to decode message" << std::endl;
         return;
     }
 
@@ -126,7 +126,7 @@ void Session::handle_data(const std::vector<uint8_t>& body) {
     if (msg->type == protocol::MessageType::Request) {
         handle_request(msg->id, msg->route, msg_body);
     } else if (msg->type == protocol::MessageType::Notify) {
-        std::cout << "[session] Notify received: route=" << msg->route << ", body=" << msg_body << "\n";
+        std::cout << "[session] Notify received: route=" << msg->route << ", body=" << msg_body << std::endl;
     }
 }
 
@@ -139,7 +139,7 @@ void Session::handle_request(int id, const std::string& route, const std::string
         if (it != handlers_.end()) {
             response_body = it->second(route, body);
         } else {
-            std::cout << "[session] Unknown route: " << route << "\n";
+            std::cout << "[session] Unknown route: " << route << std::endl;
             response_body = R"({"code":404,"msg":"Route not found: )" + route + R"("})";
         }
     }
@@ -167,7 +167,7 @@ void Session::heartbeat_loop() {
 
         auto now = std::chrono::steady_clock::now();
         if (now - last_hb > heartbeat_timeout_) {
-            std::cout << "[session] Heartbeat timeout\n";
+            std::cout << "[session] Heartbeat timeout" << std::endl;
             close();
             return;
         }
@@ -192,7 +192,7 @@ void Session::close() {
     }
 
     ::close(socket_fd_);
-    std::cout << "[session] Connection closed\n";
+    std::cout << "[session] Connection closed" << std::endl;
 }
 
 } // namespace server

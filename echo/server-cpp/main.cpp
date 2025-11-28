@@ -16,7 +16,7 @@ std::atomic<bool> running{true};
 int server_fd = -1;
 
 void signal_handler(int) {
-    std::cout << "\n[main] Shutting down server...\n";
+    std::cout << "\n[main] Shutting down server..." << std::endl;
     running = false;
     if (server_fd >= 0) {
         shutdown(server_fd, SHUT_RDWR);
@@ -25,6 +25,10 @@ void signal_handler(int) {
 }
 
 int main() {
+    // Disable buffering for stdout to ensure logs appear immediately in containers
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
+    
     // Register signal handlers
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
@@ -60,7 +64,7 @@ int main() {
         return 1;
     }
 
-    std::cout << "[main] Server listening on port " << PORT << "\n";
+    std::cout << "[main] Server listening on port " << PORT << std::endl;
 
     while (running) {
         sockaddr_in client_addr{};
@@ -74,7 +78,7 @@ int main() {
 
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
-        std::cout << "[main] Client connected: " << ip << ":" << ntohs(client_addr.sin_port) << "\n";
+        std::cout << "[main] Client connected: " << ip << ":" << ntohs(client_addr.sin_port) << std::endl;
 
         auto session = std::make_shared<server::Session>(client_fd);
         session->start();
