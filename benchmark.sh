@@ -165,6 +165,35 @@ cleanup() {
     echo "容器已停止并移除"
 }
 
+# =============================================
+# 打印系统信息
+# =============================================
+print_system_info() {
+    echo "=========================================="
+    echo "运行环境信息"
+    echo "=========================================="
+    
+    # CPU 信息
+    CPU_CORES=$(nproc 2>/dev/null || echo "N/A")
+    CPU_MODEL=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//' || echo "N/A")
+    CPU_FREQ=$(grep -m1 "cpu MHz" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | awk '{printf "%.0f", $1}' || echo "N/A")
+    echo "CPU: ${CPU_CORES} 核心, ${CPU_MODEL}"
+    if [ "$CPU_FREQ" != "N/A" ]; then
+        echo "     频率: ${CPU_FREQ} MHz"
+    fi
+    
+    # 内存信息
+    MEM_TOTAL=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{printf "%.1f", $2/1024/1024}' || echo "N/A")
+    MEM_AVAIL=$(grep MemAvailable /proc/meminfo 2>/dev/null | awk '{printf "%.1f", $2/1024/1024}' || echo "N/A")
+    if [ "$MEM_TOTAL" != "N/A" ]; then
+        echo "内存: 总计 ${MEM_TOTAL} GB, 可用 ${MEM_AVAIL} GB"
+    else
+        echo "内存: N/A"
+    fi
+    
+    echo "=========================================="
+}
+
 trap cleanup EXIT
 
 # 1. 启动容器
@@ -184,9 +213,11 @@ docker logs -n 100 "$NAME"
 docker rm "$NAME"
 trap - EXIT
 
-# 5. 分析结果
+# 5. 打印系统信息
+print_system_info
+
+# 6. 分析结果
 if [ -f "$OUTFILE" ]; then
-    echo "=========================================="
     echo "分析监控结果..."
     if [ -f "${SCRIPT_DIR}/analyze_csv.py" ]; then
         python3 "${SCRIPT_DIR}/analyze_csv.py" "$OUTFILE"

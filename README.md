@@ -100,16 +100,16 @@ docker run -d \
 
 ```sh
 # 服务端
-./benchmark.sh -n server-go \
+nohup ./benchmark.sh -n server-go \
 -i bruce48li/cyberbullfight-server-go \
--d 60
+-d 80 > benchmark.log 2>&1 &
 
 # 客户端
-./benchmark.sh -n client-go \
+nohup ./benchmark.sh -n client-go \
 -i bruce48li/cyberbullfight-client-go \
--e "SERVER_HOST=172.20.3.158" \
+-e "SERVER_HOST=172.20.3.57" \
 -e "COUNT=100" \
--d 60
+-d 60 > benchmark.log 2>&1 &
 ```
 
 跑一次 echo 的结果（客户端是 client-go ，1000个机器人）
