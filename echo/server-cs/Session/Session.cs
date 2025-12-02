@@ -1,7 +1,10 @@
+using System.Buffers;
 using System.Collections.Concurrent;
+using System.IO.Pipelines;
 using System.Net.Sockets;
 using System.Text.Json;
 using ServerCs.Protocol;
+using ServerCs.Socket;
 
 namespace ServerCs.Session;
 
@@ -24,7 +27,7 @@ public class Session
         Handlers[route] = handler;
     }
 
-    private readonly TcpClient _client;
+    private readonly IConnection _conn;
     private readonly NetworkStream _stream;
     private ConnectionState _state = ConnectionState.Inited;
     private TimeSpan _heartbeatInterval;
@@ -34,59 +37,71 @@ public class Session
     private readonly object _lock = new();
     public int ReqId { get; set; }
 
-    public Session(TcpClient client)
+    public Session(IConnection conn)
     {
-        _client = client;
-        _stream = client.GetStream();
+        _conn = conn;
         ReqId = 0;
     }
 
-    public async Task StartAsync()
+    public async Task StartAsync2()
     {
-        try
+        var conn = _conn;
+        var reader = conn.Input;
+        var writer = conn.Output;
+
+        Console.WriteLine($"TCP connected: {conn.RemoteEndPoint}");
+
+        while (!_cts.Token.IsCancellationRequested)
         {
-            byte[] buffer = new byte[4096];
-            var dataBuf = new List<byte>();
+            ReadResult result = await reader.ReadAsync();
+            var buffer = result.Buffer;
 
-            while (!_cts.Token.IsCancellationRequested)
+            if (result.IsCompleted && buffer.Length == 0)
+                break;
+
+            while (TryReadOneMessage(ref buffer, out ReadOnlySequence<byte> msg))
             {
-                _stream.ReadTimeout = 60000;
-                int n = await _stream.ReadAsync(buffer, _cts.Token);
-                if (n == 0)
+                var pkg = Package.Decode(msg.ToArray());
+                if (pkg != null)
                 {
-                    Console.WriteLine("[session] Connection closed by client");
-                    break;
-                }
-
-                dataBuf.AddRange(buffer.AsSpan(0, n).ToArray());
-
-                // Process complete packages
-                while (dataBuf.Count >= 4)
-                {
-                    int pkgLen = (dataBuf[1] << 16) | (dataBuf[2] << 8) | dataBuf[3];
-                    int totalLen = 4 + pkgLen;
-
-                    if (dataBuf.Count < totalLen)
-                        break;
-
-                    var pkgData = dataBuf.Take(totalLen).ToArray();
-                    var pkg = Package.Decode(pkgData);
-                    if (pkg != null)
-                    {
-                        ProcessPackage(pkg);
-                    }
-                    dataBuf.RemoveRange(0, totalLen);
+                    ProcessPackage(pkg);
                 }
             }
+
+            reader.AdvanceTo(buffer.Start, buffer.End);
+
+            if (result.IsCompleted)
+                break;
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[session] Read error: {ex.Message}");
-        }
-        finally
-        {
-            Close();
-        }
+
+        await reader.CompleteAsync();
+        await writer.CompleteAsync();
+
+        Console.WriteLine($"TCP disconnected: {conn.RemoteEndPoint}");
+    }
+
+    public bool TryReadOneMessage(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> msg)
+    {
+        msg = default;
+
+        if (buffer.Length < 4)
+            return false;
+
+        // 读取长度字段（前4字节 big-endian）
+        Span<byte> lenBytes = stackalloc byte[4];
+        buffer.Slice(0, 4).CopyTo(lenBytes);
+        int bodyLen = (lenBytes[0] << 24) |
+                      (lenBytes[1] << 16) |
+                      (lenBytes[2] << 8) |
+                      lenBytes[3];
+
+        if (buffer.Length < 4 + bodyLen)
+            return false;
+
+        msg = buffer.Slice(4, bodyLen);
+        buffer = buffer.Slice(4 + bodyLen);
+
+        return true;
     }
 
     private void ProcessPackage(Package pkg)
@@ -275,7 +290,6 @@ public class Session
 
         _cts.Cancel();
         _stream.Close();
-        _client.Close();
         Console.WriteLine("[session] Connection closed");
     }
 }

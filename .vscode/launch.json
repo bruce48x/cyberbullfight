@@ -4,7 +4,6 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
         {
             "name": "Debug client-go",
             "type": "go",
@@ -16,6 +15,15 @@
                 "HOST": "127.0.0.1",
                 "PORT": "3010"
             }
+        },
+        {
+            "name": "server-cs Launch",
+            "type": "coreclr",
+            "request": "launch",
+            "program": "${workspaceFolder}/echo/server-cs/bin/Debug/net8.0/server-cs.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false
         }
     ]
 }
