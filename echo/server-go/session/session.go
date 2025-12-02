@@ -19,7 +19,7 @@ const (
 	StateClosed
 )
 
-type RouteHandler func(route string, body map[string]interface{}) map[string]interface{}
+type RouteHandler func(s *Session, body map[string]interface{}) map[string]interface{}
 
 var (
 	handlers     = make(map[string]RouteHandler)
@@ -41,6 +41,7 @@ type Session struct {
 	heartbeatSeq      int
 	closeChan         chan struct{}
 	mu                sync.Mutex
+	ReqId             int // 记录总共收到多少次请求
 }
 
 func NewSession(conn net.Conn) *Session {
@@ -48,6 +49,7 @@ func NewSession(conn net.Conn) *Session {
 		conn:      conn,
 		state:     StateInited,
 		closeChan: make(chan struct{}),
+		ReqId:     0,
 	}
 }
 
@@ -184,7 +186,7 @@ func (s *Session) handleRequest(id int, route string, body map[string]interface{
 	handlersLock.RUnlock()
 
 	if ok {
-		responseBody = handler(route, body)
+		responseBody = handler(s, body)
 	} else {
 		log.Printf("[session] Unknown route: %s", route)
 		responseBody = map[string]interface{}{
@@ -248,4 +250,3 @@ func (s *Session) Close() {
 	s.conn.Close()
 	log.Printf("[session] Connection closed")
 }
-

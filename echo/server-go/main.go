@@ -33,8 +33,10 @@ func main() {
 	}()
 
 	// Register handlers
-	session.RegisterHandler("connector.entryHandler.hello", func(route string, body map[string]interface{}) map[string]interface{} {
+	session.RegisterHandler("connector.entryHandler.hello", func(s *session.Session, body map[string]interface{}) map[string]interface{} {
 		// log.Printf("[handler] hello called. route: %s, body: %v", route, body)
+		s.ReqId++
+		body["serverReqId"] = s.ReqId
 		return map[string]interface{}{
 			"code": 0,
 			"msg":  body,

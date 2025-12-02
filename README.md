@@ -27,9 +27,14 @@ cd .. && make
 cd echo/server-go
 go run main.go
 
-# 运行 go 客户端
-cd echo/client-go
-go run main.go
+# 运行 c# 服务端
+cd echo/server-cs
+dotnet run
+
+# 运行 c++ 服务端
+cd echo/server-cpp
+cmake -B build && cmake --build build
+./build/server-cpp
 
 # 运行 nodejs 客户端
 cd echo/client-js

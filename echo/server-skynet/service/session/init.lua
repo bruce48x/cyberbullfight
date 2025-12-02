@@ -21,6 +21,7 @@ handlers[helloHandler.route] = helloHandler.handler
 ---@field heartbeatTimeout number 心跳超时时间，单位：秒
 ---@field handler ProtocolHandler
 ---@field sendCallback function
+---@field reqId number 记录总共收到多少次请求
 local session = {}
 
 local function process(fd)
@@ -28,6 +29,7 @@ local function process(fd)
 
     session.fd = fd
     session.heartbeatTimerSeq = 0
+    session.reqId = 0
 
     local handler = protocol.createHandler({
         session = session,
@@ -37,7 +39,7 @@ local function process(fd)
         routeHandler = function(route, body)
             local handler = handlers[route]
             if handler then
-                return handler(route, body)
+                return handler(session, body)
             else
                 skynet.error("[main] Unknown route: " .. route)
                 return {

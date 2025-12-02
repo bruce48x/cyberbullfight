@@ -20,8 +20,10 @@ Console.CancelKeyPress += (_, e) =>
 };
 
 // Register handlers
-Session.RegisterHandler("connector.entryHandler.hello", (route, body) =>
+Session.RegisterHandler("connector.entryHandler.hello", (s, body) =>
 {
+    s.ReqId++;
+    body["serverReqId"] = s.ReqId;
     return new Dictionary<string, object?>
     {
         ["code"] = 0,

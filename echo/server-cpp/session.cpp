@@ -15,7 +15,7 @@ void Session::register_handler(const std::string& route, RouteHandler handler) {
     handlers_[route] = std::move(handler);
 }
 
-Session::Session(int socket_fd) : socket_fd_(socket_fd) {}
+Session::Session(int socket_fd) : socket_fd_(socket_fd), ReqId(0) {}
 
 Session::~Session() {
     close();
@@ -137,7 +137,19 @@ void Session::handle_request(int id, const std::string& route, const std::string
         std::lock_guard lock(handlers_mutex_);
         auto it = handlers_.find(route);
         if (it != handlers_.end()) {
-            response_body = it->second(route, body);
+            json body_json;
+            try {
+                body_json = json::parse(body);
+            } catch (const json::parse_error& e) {
+                std::cout << "[session] Failed to parse JSON body: " << e.what() << std::endl;
+                response_body = R"({"code":400,"msg":"Invalid JSON"})";
+                std::vector<uint8_t> response_bytes(response_body.begin(), response_body.end());
+                auto response_msg = protocol::Message::encode(id, protocol::MessageType::Response, false, "", response_bytes);
+                auto response_pkg = protocol::Package::encode(protocol::PackageType::Data, response_msg);
+                send(response_pkg);
+                return;
+            }
+            response_body = it->second(*this, body_json);
         } else {
             std::cout << "[session] Unknown route: " << route << std::endl;
             response_body = R"({"code":404,"msg":"Route not found: )" + route + R"("})";

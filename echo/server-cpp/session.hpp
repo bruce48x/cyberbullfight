@@ -9,6 +9,9 @@
 #include <atomic>
 
 #include "protocol.hpp"
+#include "json.hpp"
+
+using json = nlohmann::json;
 
 namespace server {
 
@@ -19,11 +22,15 @@ enum class ConnectionState {
     Closed
 };
 
-using RouteHandler = std::function<std::string(const std::string&, const std::string&)>;
+class Session; // Forward declaration to allow use in RouteHandler
+
+using RouteHandler = std::function<std::string(Session&, json)>;
 
 class Session : public std::enable_shared_from_this<Session> {
 public:
     static void register_handler(const std::string& route, RouteHandler handler);
+
+    int ReqId;
 
     explicit Session(int socket_fd);
     ~Session();

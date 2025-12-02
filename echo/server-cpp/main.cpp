@@ -9,6 +9,9 @@
 #include <unistd.h>
 
 #include "session.hpp"
+#include "json.hpp"
+
+using json = nlohmann::json;
 
 constexpr int PORT = 3010;
 
@@ -35,8 +38,13 @@ int main() {
 
     // Register handlers
     server::Session::register_handler("connector.entryHandler.hello",
-        [](const std::string& /*route*/, const std::string& body) {
-            return R"({"code":0,"msg":)" + body + "}";
+        [](server::Session& s, json body) {
+            s.ReqId++;
+            body["serverReqId"] = s.ReqId;
+            json resp;
+            resp["code"] = 0;
+            resp["msg"] = body;
+            return resp.dump();
         });
 
     // Create socket

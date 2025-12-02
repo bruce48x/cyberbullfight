@@ -13,7 +13,7 @@ public enum ConnectionState
     Closed
 }
 
-public delegate Dictionary<string, object?> RouteHandler(string route, Dictionary<string, object?>? body);
+public delegate Dictionary<string, object?> RouteHandler(Session s, Dictionary<string, object?>? body);
 
 public class Session
 {
@@ -32,11 +32,13 @@ public class Session
     private DateTime _lastHeartbeat;
     private CancellationTokenSource _cts = new();
     private readonly object _lock = new();
+    public int ReqId { get; set; }
 
     public Session(TcpClient client)
     {
         _client = client;
         _stream = client.GetStream();
+        ReqId = 0;
     }
 
     public async Task StartAsync()
@@ -203,7 +205,7 @@ public class Session
 
         if (Handlers.TryGetValue(route, out var handler))
         {
-            responseBody = handler(route, body);
+            responseBody = handler(this, body);
         }
         else
         {

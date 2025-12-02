@@ -9,6 +9,16 @@ export class Handler {
     }
 
     async hello(msg: any, session: FrontendSession) {
+        let reqId = session.get('reqId') || 0;
+        console.log('reqId', reqId);
+        reqId++;
+        session.set('reqId', reqId);
+        session.pushAll((err, result) => {
+            if (err) {
+                console.error(`session.pushAll 出错 : ${err}`);
+            }
+        });
+        msg.serverReqId = reqId;
         return { code: 0, msg };
     }
 }
