@@ -1,11 +1,17 @@
 using System.Net;
-using System.Net.Sockets;
 using ServerCs.Session;
+using ServerCs.Socket;
 
 const int Port = 3010;
 
-var listener = new TcpListener(IPAddress.Any, Port);
-listener.Start();
+var ep = new IPEndPoint(IPAddress.Any, Port);
+var saeaPool = new SaeaPool(2048, 4);
+async Task OnConn(IConnection conn)
+{
+    var sess = new Session(conn);
+    _ = sess.StartAsync2();
+}
+var listener = new TcpListenerTransport(ep, saeaPool, OnConn);
 
 Console.WriteLine($"[main] Server listening on port {Port}");
 
@@ -16,7 +22,7 @@ Console.CancelKeyPress += (_, e) =>
     e.Cancel = true;
     Console.WriteLine("[main] Shutting down server...");
     cts.Cancel();
-    listener.Stop();
+    listener.DisposeAsync();
 };
 
 // Register handlers
@@ -31,23 +37,4 @@ Session.RegisterHandler("connector.entryHandler.hello", (s, body) =>
     };
 });
 
-try
-{
-    while (!cts.Token.IsCancellationRequested)
-    {
-        var client = await listener.AcceptTcpClientAsync(cts.Token);
-        Console.WriteLine($"[main] Client connected: {client.Client.RemoteEndPoint}");
-
-        var session = new Session(client);
-        _ = session.StartAsync();
-    }
-}
-catch (OperationCanceledException)
-{
-    // Expected on shutdown
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"[main] Error: {ex.Message}");
-}
-
+await listener.StartAsync(cts.Token);
