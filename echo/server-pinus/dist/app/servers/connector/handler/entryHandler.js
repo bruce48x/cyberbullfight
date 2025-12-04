@@ -11,7 +11,6 @@ class Handler {
     }
     async hello(msg, session) {
         let reqId = session.get('reqId') || 0;
-        console.log('reqId', reqId);
         reqId++;
         session.set('reqId', reqId);
         session.pushAll((err, result) => {

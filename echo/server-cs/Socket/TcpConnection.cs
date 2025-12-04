@@ -10,7 +10,7 @@ public class TcpConnection : IConnection
     readonly Pipe _pipe;
     readonly SaeaPool _saeaPool;
     readonly SocketAsyncEventArgs _receiveArgs;
-    bool _receiving;
+    bool _disposed;
     public PipeWriter Output => _pipe.Writer;
     public PipeReader Input => _pipe.Reader;
     public EndPoint RemoteEndPoint => _socket.RemoteEndPoint;
@@ -28,35 +28,132 @@ public class TcpConnection : IConnection
 
     async Task ReceiveLoop()
     {
-        while (true)
+        try
         {
-            var memory = _pipe.Writer.GetMemory(8192);
-            int read;
-            try
+            while (!_disposed)
             {
-                read = await _socket.ReceiveAsync(memory, SocketFlags.None);
+                // Use SAEA buffer directly
+                var buffer = _receiveArgs.Buffer;
+                if (buffer == null) break;
+                _receiveArgs.SetBuffer(0, buffer.Length);
+                
+                int read = await ReceiveAsync(_receiveArgs);
+                if (read == 0 || _disposed) break; // closed
+
+                // Copy from SAEA buffer to pipe
+                var memory = _pipe.Writer.GetMemory(read);
+                buffer.AsSpan(0, read).CopyTo(memory.Span);
+                _pipe.Writer.Advance(read);
+                
+                var flush = await _pipe.Writer.FlushAsync();
+                if (flush.IsCompleted) break;
             }
-            catch (SocketException) { break; }
-            if (read == 0) break; // closed
-            _pipe.Writer.Advance(read);
-            var flush = await _pipe.Writer.FlushAsync();
-            if (flush.IsCompleted) break;
-            // let consumer parse from _pipe.Reader
         }
-        await _pipe.Writer.CompleteAsync();
+        catch (SocketException) { }
+        finally
+        {
+            await _pipe.Writer.CompleteAsync();
+        }
+    }
+
+    Task<int> ReceiveAsync(SocketAsyncEventArgs args)
+    {
+        var tcs = new TaskCompletionSource<int>();
+        EventHandler<SocketAsyncEventArgs>? handler = null;
+        
+        handler = (s, e) =>
+        {
+            args.Completed -= handler;
+            if (e.SocketError == SocketError.Success)
+                tcs.SetResult(e.BytesTransferred);
+            else
+                tcs.SetException(new SocketException((int)e.SocketError));
+        };
+
+        args.Completed += handler;
+        
+        if (!_socket.ReceiveAsync(args))
+        {
+            // Completed synchronously
+            args.Completed -= handler;
+            if (args.SocketError == SocketError.Success)
+                return Task.FromResult(args.BytesTransferred);
+            return Task.FromException<int>(new SocketException((int)args.SocketError));
+        }
+
+        return tcs.Task;
     }
 
     public async ValueTask SendAsync(ReadOnlyMemory<byte> data)
     {
-        // for high perf, avoid awaiting when completed synchronously
-        await _socket.SendAsync(data, SocketFlags.None);
+        if (_disposed) return;
+
+        int offset = 0;
+        while (offset < data.Length)
+        {
+            var sendArgs = _saeaPool.Rent();
+            try
+            {
+                sendArgs.AcceptSocket = _socket;
+                
+                var buffer = sendArgs.Buffer;
+                if (buffer == null) break;
+                
+                int chunkSize = Math.Min(data.Length - offset, buffer.Length);
+                data.Slice(offset, chunkSize).CopyTo(buffer);
+                sendArgs.SetBuffer(0, chunkSize);
+
+                await SendAsync(sendArgs);
+                offset += chunkSize;
+            }
+            finally
+            {
+                _saeaPool.Return(sendArgs);
+            }
+        }
     }
 
-    public async ValueTask DisposeAsync()
+    Task SendAsync(SocketAsyncEventArgs args)
     {
+        var tcs = new TaskCompletionSource();
+        EventHandler<SocketAsyncEventArgs>? handler = null;
+        
+        handler = (s, e) =>
+        {
+            args.Completed -= handler;
+            if (e.SocketError == SocketError.Success)
+                tcs.SetResult();
+            else
+                tcs.SetException(new SocketException((int)e.SocketError));
+        };
+
+        args.Completed += handler;
+        
+        if (!_socket.SendAsync(args))
+        {
+            // Completed synchronously
+            args.Completed -= handler;
+            if (args.SocketError == SocketError.Success)
+                return Task.CompletedTask;
+            return Task.FromException(new SocketException((int)args.SocketError));
+        }
+
+        return tcs.Task;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (_disposed) return ValueTask.CompletedTask;
+        _disposed = true;
+
         try { _socket.Shutdown(SocketShutdown.Both); } catch {}
-        _socket.Close();
+        try { _socket.Close(); } catch {}
+        
         _pipe.Writer.Complete();
         _pipe.Reader.Complete();
+        
+        // Return SAEA to pool
+        _saeaPool.Return(_receiveArgs);
+        return ValueTask.CompletedTask;
     }
 }
