@@ -15,6 +15,6 @@ terraform {
 provider "alicloud" {}
 
 resource "alicloud_resource_manager_resource_group" "default" {
-  resource_group_name = "cyberbullfight-test"
-  display_name        = "cyberbullfight-横向测试"
+  resource_group_name = "cyberbullfight-echo"
+  display_name        = "cyberbullfight-echo-横向测试"
 }

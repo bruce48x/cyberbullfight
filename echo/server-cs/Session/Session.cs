@@ -28,7 +28,6 @@ public class Session
     }
 
     private readonly IConnection _conn;
-    private readonly NetworkStream _stream;
     private ConnectionState _state = ConnectionState.Inited;
     private TimeSpan _heartbeatInterval;
     private TimeSpan _heartbeatTimeout;
@@ -58,14 +57,10 @@ public class Session
 
             if (result.IsCompleted && buffer.Length == 0)
                 break;
-
-            while (TryReadOneMessage(ref buffer, out ReadOnlySequence<byte> msg))
+            
+            while (TryReadPackage(ref buffer, out var package))
             {
-                var pkg = Package.Decode(msg.ToArray());
-                if (pkg != null)
-                {
-                    ProcessPackage(pkg);
-                }
+                await ProcessPackageAsync(package);
             }
 
             reader.AdvanceTo(buffer.Start, buffer.End);
@@ -103,22 +98,51 @@ public class Session
 
         return true;
     }
+    
+    public bool TryReadPackage(ref ReadOnlySequence<byte> buffer, out Package pkg)
+    {
+        pkg = default;
 
-    private void ProcessPackage(Package pkg)
+        if (buffer.Length < 4)
+            return false;
+
+        Span<byte> lenBytes = stackalloc byte[4];
+        buffer.Slice(0, 4).CopyTo(lenBytes);
+        byte type = lenBytes[0];
+        int bodyLen = (lenBytes[1] << 16) |
+                      (lenBytes[2] << 8) |
+                      lenBytes[3];
+
+        if (buffer.Length < 4 + bodyLen)
+            return false;
+
+        if (pkg == null)
+        {
+            pkg = new Package();
+        }
+        pkg.Type = type;
+        pkg.Length =  bodyLen;
+        pkg.Body = buffer.Slice(4, bodyLen).ToArray();
+        buffer = buffer.Slice(4 + bodyLen);
+
+        return true;
+    }
+
+    private async Task ProcessPackageAsync(Package pkg)
     {
         switch (pkg.Type)
         {
             case PackageType.Handshake:
-                HandleHandshake(pkg.Body);
+                await HandleHandshakeAsync(pkg.Body);
                 break;
             case PackageType.HandshakeAck:
-                HandleHandshakeAck();
+                await HandleHandshakeAckAsync();
                 break;
             case PackageType.Heartbeat:
-                HandleHeartbeat();
+                await HandleHeartbeatAsync();
                 break;
             case PackageType.Data:
-                HandleData(pkg.Body);
+                await HandleDataAsync(pkg.Body);
                 break;
             case PackageType.Kick:
                 Close();
@@ -126,7 +150,7 @@ public class Session
         }
     }
 
-    private void HandleHandshake(byte[] body)
+    private async Task HandleHandshakeAsync(byte[] body)
     {
         var response = new Dictionary<string, object?>
         {
@@ -146,7 +170,7 @@ public class Session
 
         byte[] responseBody = JsonSerializer.SerializeToUtf8Bytes(response);
         byte[] responsePkg = Package.Encode(PackageType.Handshake, responseBody);
-        Send(responsePkg);
+        await SendAsync(responsePkg);
 
         lock (_lock)
         {
@@ -156,7 +180,7 @@ public class Session
         }
     }
 
-    private void HandleHandshakeAck()
+    private Task HandleHandshakeAckAsync()
     {
         lock (_lock)
         {
@@ -166,9 +190,10 @@ public class Session
 
         // Start heartbeat
         _ = HeartbeatLoopAsync();
+        return Task.CompletedTask;
     }
 
-    private void HandleHeartbeat()
+    private async Task HandleHeartbeatAsync()
     {
         lock (_lock)
         {
@@ -177,10 +202,10 @@ public class Session
 
         // Send heartbeat response
         byte[] heartbeatPkg = Package.Encode(PackageType.Heartbeat, null);
-        Send(heartbeatPkg);
+        await SendAsync(heartbeatPkg);
     }
 
-    private void HandleData(byte[] body)
+    private async Task HandleDataAsync(byte[] body)
     {
         lock (_lock)
         {
@@ -206,7 +231,7 @@ public class Session
 
         if (msg.Type == MessageType.Request)
         {
-            HandleRequest(msg.Id, msg.Route, msgBody);
+            await HandleRequestAsync(msg.Id, msg.Route, msgBody);
         }
         else if (msg.Type == MessageType.Notify)
         {
@@ -214,7 +239,7 @@ public class Session
         }
     }
 
-    private void HandleRequest(int id, string route, Dictionary<string, object?>? body)
+    private async Task HandleRequestAsync(int id, string route, Dictionary<string, object?>? body)
     {
         Dictionary<string, object?> responseBody;
 
@@ -235,7 +260,7 @@ public class Session
         byte[] responseBodyBytes = JsonSerializer.SerializeToUtf8Bytes(responseBody);
         byte[] responseMsg = Message.Encode(id, MessageType.Response, false, "", responseBodyBytes);
         byte[] responsePkg = Package.Encode(PackageType.Data, responseMsg);
-        Send(responsePkg);
+        await SendAsync(responsePkg);
     }
 
     private async Task HeartbeatLoopAsync()
@@ -266,15 +291,15 @@ public class Session
 
             // Send heartbeat
             byte[] heartbeatPkg = Package.Encode(PackageType.Heartbeat, null);
-            Send(heartbeatPkg);
+            await SendAsync(heartbeatPkg);
         }
     }
 
-    private void Send(byte[] data)
+    private async ValueTask SendAsync(byte[] data)
     {
         try
         {
-            _stream.Write(data);
+            await _conn.SendAsync(data);
         }
         catch { }
     }
@@ -289,7 +314,7 @@ public class Session
         }
 
         _cts.Cancel();
-        _stream.Close();
+        _ = _conn.DisposeAsync();
         Console.WriteLine("[session] Connection closed");
     }
 }
