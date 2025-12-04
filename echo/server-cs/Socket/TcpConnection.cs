@@ -10,6 +10,7 @@ public class TcpConnection : IConnection
     readonly Pipe _pipe;
     readonly SaeaPool _saeaPool;
     readonly SocketAsyncEventArgs _receiveArgs;
+    Task? _receiveLoopTask;
     bool _disposed;
     public PipeWriter Output => _pipe.Writer;
     public PipeReader Input => _pipe.Reader;
@@ -24,7 +25,11 @@ public class TcpConnection : IConnection
         _receiveArgs.AcceptSocket = _socket;
     }
 
-    public Task StartReceivingAsync() => ReceiveLoop();
+    public Task StartReceivingAsync()
+    {
+        _receiveLoopTask = ReceiveLoop();
+        return _receiveLoopTask;
+    }
 
     async Task ReceiveLoop()
     {
@@ -141,19 +146,30 @@ public class TcpConnection : IConnection
         return tcs.Task;
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        if (_disposed) return ValueTask.CompletedTask;
+        if (_disposed) return;
         _disposed = true;
 
+        // Shutdown socket to stop receiving
         try { _socket.Shutdown(SocketShutdown.Both); } catch {}
         try { _socket.Close(); } catch {}
         
+        // Complete pipes to signal ReceiveLoop to exit
         _pipe.Writer.Complete();
         _pipe.Reader.Complete();
         
-        // Return SAEA to pool
+        // Wait for ReceiveLoop to finish to ensure no one is using _receiveArgs
+        if (_receiveLoopTask != null)
+        {
+            try
+            {
+                await _receiveLoopTask;
+            }
+            catch { } // Ignore exceptions from receive loop
+        }
+        
+        // Now it's safe to return SAEA to pool
         _saeaPool.Return(_receiveArgs);
-        return ValueTask.CompletedTask;
     }
 }
