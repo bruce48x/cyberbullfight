@@ -1,9 +1,13 @@
-﻿using System.Net;
-using System.IO.Pipelines;
+﻿using System.IO.Pipelines;
+using System.Net;
 
 namespace ServerCs.Socket;
 
-public enum TransportType { Tcp, Udp }
+public enum TransportType
+{
+    Tcp,
+    Udp
+}
 
 public interface IConnection : IAsyncDisposable
 {

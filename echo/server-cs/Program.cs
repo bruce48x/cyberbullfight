@@ -5,13 +5,14 @@ using ServerCs.Socket;
 const int Port = 3010;
 
 var ep = new IPEndPoint(IPAddress.Any, Port);
-var saeaPool = new SaeaPool(2048, 4);
+
 async Task OnConn(IConnection conn)
 {
     var sess = new Session(conn);
-    _ = sess.StartAsync2();
+    await sess.StartAsync();
 }
-var listener = new TcpListenerTransport(ep, saeaPool, OnConn);
+
+var listener = new TcpListenerTransport(ep, OnConn);
 
 Console.WriteLine($"[main] Server listening on port {Port}");
 

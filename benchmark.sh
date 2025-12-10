@@ -91,7 +91,7 @@ start_monitor() {
     echo "Network interface = $VETH"
 
     # CSV 表头
-    echo "timestamp,cpu%,mem_mb,read_kb/s,write_kb/s,recv_kb/s,send_kb/s,ctx_switch,load1" > $OUTFILE
+    echo "timestamp,cpu%,mem_mb,read_kb/s,write_kb/s,recv_kb/s,send_kb/s,ctx_switch,load1,threads" > $OUTFILE
     echo "Output => $OUTFILE"
 
     # 初始 IO 统计
@@ -148,8 +148,12 @@ start_monitor() {
         # 系统负载
         LOAD1=$(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | tr -d ' ')
 
+        # 线程数量
+        THREADS=$(grep "^Threads:" /proc/$PID/status 2>/dev/null | awk '{print $2}' || echo 0)
+        THREADS=${THREADS:-0}
+
         # 写入 CSV
-        echo "$TS,$CPU_PERCENT,$MEM_MB,$READ_KB,$WRITE_KB,$RECV_KB,$SEND_KB,$CTX,$LOAD1" >> $OUTFILE
+        echo "$TS,$CPU_PERCENT,$MEM_MB,$READ_KB,$WRITE_KB,$RECV_KB,$SEND_KB,$CTX,$LOAD1,$THREADS" >> $OUTFILE
 
         sleep $INTERVAL
         elapsed=$((elapsed + INTERVAL))

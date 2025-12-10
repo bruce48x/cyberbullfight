@@ -10,7 +10,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o server-go .
 
 # Run stage
-FROM debian:stable-slim  
+FROM debian:13.2-slim  
 
 WORKDIR /app
 

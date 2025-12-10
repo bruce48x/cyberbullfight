@@ -27,6 +27,7 @@ public class Message
         {
             flag |= 1;
         }
+
         result.Add(flag);
 
         // Encode id (base128, only for REQUEST/RESPONSE)
@@ -41,6 +42,7 @@ public class Message
                 {
                     tmp += 128;
                 }
+
                 result.Add((byte)tmp);
                 idVal = next;
             } while (idVal != 0);

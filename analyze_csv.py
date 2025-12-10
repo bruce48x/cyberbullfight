@@ -34,6 +34,7 @@ def analyze(filepath):
     recv = [r["recv_kb/s"] for r in rows]
     send = [r["send_kb/s"] for r in rows]
     ctx = [r["ctx_switch"] for r in rows]
+    threads = [r.get("threads", 0) for r in rows]
 
     result = {
         "cpu_avg": mean(cpu),
@@ -51,6 +52,10 @@ def analyze(filepath):
 
         "ctx_avg": mean(ctx),
         "ctx_max": max(ctx),
+
+        "threads_avg": mean(threads) if threads else 0,
+        "threads_max": max(threads) if threads else 0,
+        "threads_min": min(threads) if threads else 0,
     }
     return result
 
@@ -62,6 +67,7 @@ def summarize(name, stat):
   磁盘：读 {stat['read_avg']:.1f} KB/s，写 {stat['write_avg']:.1f} KB/s
   网络：收 {stat['recv_avg']:.1f} KB/s，发 {stat['send_avg']:.1f} KB/s
   上下文切换：平均 {stat['ctx_avg']:.1f} 次/s，峰值 {stat['ctx_max']:.1f} 次/s
+  线程数：平均 {stat['threads_avg']:.1f}，最小 {stat['threads_min']:.0f}，最大 {stat['threads_max']:.0f}
 """
 
 def main():

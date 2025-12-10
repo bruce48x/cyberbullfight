@@ -13,7 +13,7 @@ COPY . .
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o client-go .
 
-FROM debian:stable-slim  
+FROM debian:13.2-slim  
 WORKDIR /app
 COPY --from=builder /app/client-go .
 

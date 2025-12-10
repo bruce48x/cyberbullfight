@@ -6,12 +6,11 @@ namespace ServerCs.Socket;
 
 public class UdpListenerTransport : IListener
 {
-    readonly System.Net.Sockets.Socket _sock;
-    readonly SaeaPool _saeaPool;
-    readonly Func<EndPoint, ReadOnlyMemory<byte>, Task> _onDatagram;
-    public UdpListenerTransport(IPEndPoint ep, SaeaPool pool, Func<EndPoint, ReadOnlyMemory<byte>, Task> onDatagram)
+    private readonly Func<EndPoint, ReadOnlyMemory<byte>, Task> _onDatagram;
+    private readonly System.Net.Sockets.Socket _sock;
+
+    public UdpListenerTransport(IPEndPoint ep, Func<EndPoint, ReadOnlyMemory<byte>, Task> onDatagram)
     {
-        _saeaPool = pool;
         _onDatagram = onDatagram;
         _sock = new System.Net.Sockets.Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         _sock.Bind(ep);
@@ -28,11 +27,13 @@ public class UdpListenerTransport : IListener
             {
                 res = await _sock.ReceiveFromAsync(seg, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0));
             }
-            catch (SocketException) { break; }
-            if (res.ReceivedBytes > 0)
+            catch (SocketException)
             {
-                await _onDatagram(res.RemoteEndPoint, new ReadOnlyMemory<byte>(buffer, 0, res.ReceivedBytes));
+                break;
             }
+
+            if (res.ReceivedBytes > 0)
+                await _onDatagram(res.RemoteEndPoint, new ReadOnlyMemory<byte>(buffer, 0, res.ReceivedBytes));
         }
     }
 

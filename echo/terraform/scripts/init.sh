@@ -41,7 +41,7 @@ usermod -aG docker ecs-user
 echo '设置 zsh 为默认 shell'
 su ecs-user -c "chsh -s $(which zsh)"
 
-echo "完成"
-
 # 提前拉取镜像
 docker pull "${DOCKER_MIRROR}"
+
+echo "完成"

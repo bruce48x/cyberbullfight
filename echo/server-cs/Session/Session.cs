@@ -42,7 +42,7 @@ public class Session
         ReqId = 0;
     }
 
-    public async Task StartAsync2()
+    public async Task StartAsync()
     {
         var conn = _conn;
         var reader = conn.Input;
@@ -57,7 +57,7 @@ public class Session
 
             if (result.IsCompleted && buffer.Length == 0)
                 break;
-            
+
             while (TryReadPackage(ref buffer, out var package))
             {
                 await ProcessPackageAsync(package);
@@ -75,30 +75,6 @@ public class Session
         Console.WriteLine($"TCP disconnected: {conn.RemoteEndPoint}");
     }
 
-    public bool TryReadOneMessage(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> msg)
-    {
-        msg = default;
-
-        if (buffer.Length < 4)
-            return false;
-
-        // 读取长度字段（前4字节 big-endian）
-        Span<byte> lenBytes = stackalloc byte[4];
-        buffer.Slice(0, 4).CopyTo(lenBytes);
-        int bodyLen = (lenBytes[0] << 24) |
-                      (lenBytes[1] << 16) |
-                      (lenBytes[2] << 8) |
-                      lenBytes[3];
-
-        if (buffer.Length < 4 + bodyLen)
-            return false;
-
-        msg = buffer.Slice(4, bodyLen);
-        buffer = buffer.Slice(4 + bodyLen);
-
-        return true;
-    }
-    
     public bool TryReadPackage(ref ReadOnlySequence<byte> buffer, out Package pkg)
     {
         pkg = default;
@@ -120,8 +96,9 @@ public class Session
         {
             pkg = new Package();
         }
+
         pkg.Type = type;
-        pkg.Length =  bodyLen;
+        pkg.Length = bodyLen;
         pkg.Body = buffer.Slice(4, bodyLen).ToArray();
         buffer = buffer.Slice(4 + bodyLen);
 
@@ -226,7 +203,9 @@ public class Session
             {
                 msgBody = JsonSerializer.Deserialize<Dictionary<string, object?>>(msg.Body);
             }
-            catch { }
+            catch
+            {
+            }
         }
 
         if (msg.Type == MessageType.Request)
@@ -235,7 +214,8 @@ public class Session
         }
         else if (msg.Type == MessageType.Notify)
         {
-            Console.WriteLine($"[session] Notify received: route={msg.Route}, body={JsonSerializer.Serialize(msgBody)}");
+            Console.WriteLine(
+                $"[session] Notify received: route={msg.Route}, body={JsonSerializer.Serialize(msgBody)}");
         }
     }
 
@@ -301,7 +281,9 @@ public class Session
         {
             await _conn.SendAsync(data);
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     public void Close()
@@ -318,4 +300,3 @@ public class Session
         Console.WriteLine("[session] Connection closed");
     }
 }
-
