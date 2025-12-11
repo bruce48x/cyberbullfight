@@ -6,25 +6,23 @@
 #include <memory>
 #include <fcntl.h>
 #include <errno.h>
+#include <vector>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <sys/epoll.h>
 
 #include "session.hpp"
 #include "coroutine.hpp"
 #include "json.hpp"
+#include "poller.hpp"
 
 using json = nlohmann::json;
 
 constexpr int PORT = 3010;
-constexpr int MAX_EVENTS = 64;
-
 std::atomic<bool> running{true};
 int server_fd = -1;
-int epoll_fd = -1;
 std::map<int, std::shared_ptr<server::Session>> sessions;
 server::Scheduler scheduler;
 
@@ -34,9 +32,6 @@ void signal_handler(int) {
     if (server_fd >= 0) {
         shutdown(server_fd, SHUT_RDWR);
         ::close(server_fd);
-    }
-    if (epoll_fd >= 0) {
-        ::close(epoll_fd);
     }
 }
 
@@ -97,40 +92,39 @@ int main() {
         return 1;
     }
 
-    // Create epoll instance
-    epoll_fd = epoll_create1(0);
-    if (epoll_fd < 0) {
-        std::cerr << "[main] Failed to create epoll\n";
+    // Create platform-specific poller (epoll on Linux, kqueue on macOS)
+    Poller poller;
+    if (!poller.is_valid()) {
+        std::cerr << "[main] Failed to create poller\n";
         return 1;
     }
-
-    // Add server socket to epoll
-    epoll_event ev{};
-    ev.events = EPOLLIN;
-    ev.data.fd = server_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev) < 0) {
-        std::cerr << "[main] Failed to add server socket to epoll\n";
+    if (!poller.add_fd(server_fd)) {
+        std::cerr << "[main] Failed to add server socket to poller\n";
         return 1;
     }
+    std::vector<Poller::Event> events;
+    events.reserve(64);
 
     std::cout << "[main] Server listening on port " << PORT << std::endl;
-
-    epoll_event events[MAX_EVENTS];
 
     while (running) {
         // Calculate timeout based on coroutine scheduler
         auto timeout_ms = scheduler.next_timeout();
         int timeout = timeout_ms.count() > 1000 ? 1000 : static_cast<int>(timeout_ms.count());
         
-        int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, timeout);
+        int nfds = poller.wait(events, timeout);
         if (nfds < 0) {
             if (errno == EINTR) continue;
-            std::cerr << "[main] epoll_wait error\n";
+            std::cerr << "[main] poller wait error\n";
             break;
         }
+        if (nfds == 0) {
+            scheduler.tick();
+            continue;
+        }
 
-        for (int i = 0; i < nfds; ++i) {
-            if (events[i].data.fd == server_fd) {
+        for (const auto& ev : events) {
+            if (ev.fd == server_fd && ev.readable) {
                 // New connection
                 while (true) {
                     sockaddr_in client_addr{};
@@ -157,12 +151,9 @@ int main() {
                     inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
                     std::cout << "[main] Client connected: " << ip << ":" << ntohs(client_addr.sin_port) << std::endl;
 
-                    // Add client socket to epoll
-                    epoll_event client_ev{};
-                    client_ev.events = EPOLLIN | EPOLLET; // Edge-triggered mode
-                    client_ev.data.fd = client_fd;
-                    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &client_ev) < 0) {
-                        std::cerr << "[main] Failed to add client socket to epoll\n";
+                    // Add client socket to poller
+                    if (!poller.add_fd(client_fd)) {
+                        std::cerr << "[main] Failed to add client socket to poller\n";
                         ::close(client_fd);
                         continue;
                     }
@@ -174,7 +165,7 @@ int main() {
                 }
             } else {
                 // Client socket event
-                int client_fd = events[i].data.fd;
+                int client_fd = ev.fd;
                 auto it = sessions.find(client_fd);
                 if (it == sessions.end()) {
                     continue;
@@ -182,20 +173,20 @@ int main() {
 
                 auto session = it->second;
 
-                if (events[i].events & (EPOLLERR | EPOLLHUP)) {
+                if (ev.error) {
                     // Connection error or hangup
                     session->close();
-                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                    poller.remove_fd(client_fd);
                     sessions.erase(it);
                     continue;
                 }
 
-                if (events[i].events & EPOLLIN) {
+                if (ev.readable) {
                     // Data available to read
                     if (!session->handle_read()) {
                         // Connection closed
                         session->close();
-                        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr);
+                        poller.remove_fd(client_fd);
                         sessions.erase(it);
                     }
                 }
@@ -213,7 +204,6 @@ int main() {
     }
     sessions.clear();
 
-    if (epoll_fd >= 0) ::close(epoll_fd);
     if (server_fd >= 0) ::close(server_fd);
 
     return 0;
