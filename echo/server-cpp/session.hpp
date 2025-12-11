@@ -37,6 +37,7 @@ public:
 
     void start();
     void close();
+    bool handle_read(); // Returns false if connection should be closed
 
 private:
     void run();
@@ -59,6 +60,7 @@ private:
     std::chrono::steady_clock::time_point last_heartbeat_;
     std::atomic<bool> running_{true};
     std::mutex mutex_;
+    std::vector<uint8_t> data_buf_; // Buffer for incomplete packages
     std::thread read_thread_;
     std::thread heartbeat_thread_;
 };

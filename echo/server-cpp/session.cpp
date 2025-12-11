@@ -4,6 +4,7 @@
 #include <cstring>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <errno.h>
 
 namespace server {
 
@@ -24,38 +25,52 @@ Session::~Session() {
 }
 
 void Session::start() {
-    read_thread_ = std::thread([self = shared_from_this()]() { self->run(); });
+    // Session is now managed by epoll, no need for separate thread
 }
 
-void Session::run() {
+bool Session::handle_read() {
     std::vector<uint8_t> buffer(4096);
-    std::vector<uint8_t> data_buf;
-
+    
     while (running_) {
         ssize_t n = recv(socket_fd_, buffer.data(), buffer.size(), 0);
-        if (n <= 0) {
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No more data available (non-blocking)
+                break;
+            }
+            std::cout << "[session] Recv error: " << strerror(errno) << std::endl;
+            return false;
+        }
+        
+        if (n == 0) {
             std::cout << "[session] Connection closed by client" << std::endl;
-            break;
+            return false;
         }
 
-        data_buf.insert(data_buf.end(), buffer.begin(), buffer.begin() + n);
+        data_buf_.insert(data_buf_.end(), buffer.begin(), buffer.begin() + n);
 
         // Process complete packages
-        while (data_buf.size() >= 4) {
-            int pkg_len = (data_buf[1] << 16) | (data_buf[2] << 8) | data_buf[3];
+        while (data_buf_.size() >= 4) {
+            int pkg_len = (data_buf_[1] << 16) | (data_buf_[2] << 8) | data_buf_[3];
             size_t total_len = 4 + pkg_len;
 
-            if (data_buf.size() < total_len) break;
+            if (data_buf_.size() < total_len) break;
 
-            std::vector<uint8_t> pkg_data(data_buf.begin(), data_buf.begin() + total_len);
+            std::vector<uint8_t> pkg_data(data_buf_.begin(), data_buf_.begin() + total_len);
             auto pkg = protocol::Package::decode(pkg_data);
             if (pkg) {
                 process_package(*pkg);
             }
-            data_buf.erase(data_buf.begin(), data_buf.begin() + total_len);
+            data_buf_.erase(data_buf_.begin(), data_buf_.begin() + total_len);
         }
     }
 
+    return running_;
+}
+
+void Session::run() {
+    // Legacy method, kept for compatibility but not used with epoll
+    handle_read();
     close();
 }
 
@@ -190,7 +205,21 @@ void Session::heartbeat_loop() {
 }
 
 void Session::send(const std::vector<uint8_t>& data) {
-    ::send(socket_fd_, data.data(), data.size(), 0);
+    ssize_t sent = 0;
+    while (sent < static_cast<ssize_t>(data.size())) {
+        ssize_t n = ::send(socket_fd_, data.data() + sent, data.size() - sent, 0);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Socket buffer is full, wait a bit and retry
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            std::cout << "[session] Send error: " << strerror(errno) << std::endl;
+            close();
+            return;
+        }
+        sent += n;
+    }
 }
 
 void Session::close() {
@@ -208,4 +237,5 @@ void Session::close() {
 }
 
 } // namespace server
+
 
