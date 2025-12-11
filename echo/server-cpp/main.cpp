@@ -14,6 +14,7 @@
 #include <sys/epoll.h>
 
 #include "session.hpp"
+#include "coroutine.hpp"
 #include "json.hpp"
 
 using json = nlohmann::json;
@@ -25,6 +26,7 @@ std::atomic<bool> running{true};
 int server_fd = -1;
 int epoll_fd = -1;
 std::map<int, std::shared_ptr<server::Session>> sessions;
+server::Scheduler scheduler;
 
 void signal_handler(int) {
     std::cout << "\n[main] Shutting down server..." << std::endl;
@@ -116,7 +118,11 @@ int main() {
     epoll_event events[MAX_EVENTS];
 
     while (running) {
-        int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, 1000); // 1 second timeout
+        // Calculate timeout based on coroutine scheduler
+        auto timeout_ms = scheduler.next_timeout();
+        int timeout = timeout_ms.count() > 1000 ? 1000 : static_cast<int>(timeout_ms.count());
+        
+        int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, timeout);
         if (nfds < 0) {
             if (errno == EINTR) continue;
             std::cerr << "[main] epoll_wait error\n";
@@ -162,7 +168,7 @@ int main() {
                     }
 
                     // Create session
-                    auto session = std::make_shared<server::Session>(client_fd);
+                    auto session = std::make_shared<server::Session>(client_fd, scheduler);
                     sessions[client_fd] = session;
                     session->start();
                 }
@@ -195,6 +201,9 @@ int main() {
                 }
             }
         }
+
+        // Process coroutine scheduler
+        scheduler.tick();
     }
 
     // Cleanup

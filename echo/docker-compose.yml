@@ -1,6 +1,6 @@
 services:
   server:
-    image: bruce48li/cyberbullfight-server-java
+    image: bruce48li/cyberbullfight-server-cpp
     environment:
       - TZ=Asia/Shanghai
     ports:

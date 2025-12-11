@@ -5,11 +5,12 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <atomic>
+#include <chrono>
 
 #include "protocol.hpp"
 #include "json.hpp"
+#include "coroutine.hpp"
 
 using json = nlohmann::json;
 
@@ -32,7 +33,7 @@ public:
 
     int ReqId;
 
-    explicit Session(int socket_fd);
+    explicit Session(int socket_fd, Scheduler& scheduler);
     ~Session();
 
     void start();
@@ -47,13 +48,14 @@ private:
     void handle_heartbeat();
     void handle_data(const std::vector<uint8_t>& body);
     void handle_request(int id, const std::string& route, const std::string& body);
-    void heartbeat_loop();
+    Task heartbeat_coroutine();
     void send(const std::vector<uint8_t>& data);
 
     static std::map<std::string, RouteHandler> handlers_;
     static std::mutex handlers_mutex_;
 
     int socket_fd_;
+    Scheduler& scheduler_;
     ConnectionState state_ = ConnectionState::Inited;
     std::chrono::seconds heartbeat_interval_{10};
     std::chrono::seconds heartbeat_timeout_{20};
@@ -61,8 +63,7 @@ private:
     std::atomic<bool> running_{true};
     std::mutex mutex_;
     std::vector<uint8_t> data_buf_; // Buffer for incomplete packages
-    std::thread read_thread_;
-    std::thread heartbeat_thread_;
+    int heartbeat_timer_id_ = -1; // Timer ID for heartbeat coroutine
 };
 
 } // namespace server
