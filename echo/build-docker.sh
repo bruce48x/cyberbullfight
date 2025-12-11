@@ -35,6 +35,7 @@ build_image() {
 }
 
 # 构建所有组件
+build_image "server-java" "./server-java/Dockerfile"
 build_image "server-cpp" "./server-cpp/Dockerfile"
 build_image "server-pinus" "./server-pinus/Dockerfile"
 build_image "client-js" "./client-js/Dockerfile"
