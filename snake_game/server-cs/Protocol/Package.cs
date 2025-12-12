@@ -1,3 +1,5 @@
+using System.Buffers;
+
 namespace SnakeGame.Server.Protocol;
 
 public static class PackageType
@@ -49,6 +51,44 @@ public class Package
         {
             Buffer.BlockCopy(data, 4, body, 0, length);
         }
+
+        return new Package
+        {
+            Type = pkgType,
+            Length = length,
+            Body = body
+        };
+    }
+
+    // 使用 System.IO.Pipelines 优化的解码方法
+    public static Package? Decode(ref ReadOnlySequence<byte> buffer)
+    {
+        if (buffer.Length < 4)
+            return null;
+
+        var reader = new SequenceReader<byte>(buffer);
+        
+        if (!reader.TryRead(out var pkgType))
+            return null;
+        
+        if (!reader.TryRead(out var b1) || !reader.TryRead(out var b2) || !reader.TryRead(out var b3))
+            return null;
+
+        int length = (b1 << 16) | (b2 << 8) | b3;
+
+        if (buffer.Length < 4 + length)
+            return null;
+
+        byte[] body = Array.Empty<byte>();
+        if (length > 0)
+        {
+            body = new byte[length];
+            var bodySequence = buffer.Slice(4, length);
+            bodySequence.CopyTo(body);
+        }
+
+        // 消费已读取的数据
+        buffer = buffer.Slice(4 + length);
 
         return new Package
         {

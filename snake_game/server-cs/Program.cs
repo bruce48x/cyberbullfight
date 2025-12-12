@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using System.Linq;
+using System.IO.Pipelines;
+using System.Buffers;
 using SnakeGame.Server.Protocol;
 using SnakeGame.Server;
 
@@ -163,34 +165,32 @@ async Task HandleClient(TcpClient socket)
     using var client = socket;
     var stream = client.GetStream();
     
+    // 使用 System.IO.Pipelines 优化 IO
+    var reader = PipeReader.Create(stream);
+    var writer = PipeWriter.Create(stream);
+    
     Player? player = null;
-    var buffer = new List<byte>();
-    var readBuffer = new byte[4096];
 
     try
     {
         // Wait for handshake
         while (true)
         {
-            var bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length);
-            if (bytesRead == 0)
-            {
-                Console.WriteLine("Client disconnected before handshake");
-                return;
-            }
-
-            buffer.AddRange(readBuffer.Take(bytesRead));
+            var result = await reader.ReadAsync(cts.Token);
+            var buffer = result.Buffer;
 
             // Try to decode package
-            var pkg = Package.Decode(buffer.ToArray());
+            var tempBuffer = buffer;
+            var pkg = Package.Decode(ref tempBuffer);
             if (pkg == null)
             {
                 // Not enough data, continue reading
-                if (buffer.Count > 1024 * 10) // Prevent buffer overflow
+                if (buffer.Length > 1024 * 10) // Prevent buffer overflow
                 {
                     Console.WriteLine("Buffer overflow");
                     return;
                 }
+                reader.AdvanceTo(buffer.Start, buffer.End);
                 continue;
             }
 
@@ -209,7 +209,7 @@ async Task HandleClient(TcpClient socket)
                     {
                         Id = id,
                         Name = playerName ?? $"Player{id}",
-                        Stream = stream,
+                        Writer = writer,
                         Status = PlayerStatus.Matching,
                         RoomId = null
                     };
@@ -240,10 +240,13 @@ async Task HandleClient(TcpClient socket)
 
                 var responseBody = JsonSerializer.SerializeToUtf8Bytes(handshakeResponse);
                 var responsePkg = Package.Encode(PackageType.Handshake, responseBody);
-                await stream.WriteAsync(responsePkg, 0, responsePkg.Length);
-                await stream.FlushAsync();
+                var responseMemory = writer.GetMemory(responsePkg.Length);
+                responsePkg.CopyTo(responseMemory.Span);
+                writer.Advance(responsePkg.Length);
+                await writer.FlushAsync(cts.Token);
 
-                buffer.Clear();
+                var consumed = buffer.GetPosition(4 + pkg.Length);
+                reader.AdvanceTo(consumed);
                 Console.WriteLine($"Player {player.Id} ({player.Name}) connected, joining match queue");
 
                 // 将玩家加入匹配队列
@@ -258,24 +261,23 @@ async Task HandleClient(TcpClient socket)
         }
 
         // Wait for handshake ack
-        buffer.Clear();
         while (true)
         {
-            var bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length);
-            if (bytesRead == 0)
+            var result = await reader.ReadAsync(cts.Token);
+            var buffer = result.Buffer;
+
+            var tempBuffer = buffer;
+            var pkg = Package.Decode(ref tempBuffer);
+            if (pkg == null)
             {
-                Console.WriteLine("Client disconnected before handshake ack");
-                return;
+                reader.AdvanceTo(buffer.Start, buffer.End);
+                continue;
             }
-
-            buffer.AddRange(readBuffer.Take(bytesRead));
-
-            var pkg = Package.Decode(buffer.ToArray());
-            if (pkg == null) continue;
 
             if (pkg.Type == PackageType.HandshakeAck)
             {
-                buffer.Clear();
+                var consumed = buffer.GetPosition(4 + pkg.Length);
+                reader.AdvanceTo(consumed);
                 break;
             }
             else
@@ -286,25 +288,23 @@ async Task HandleClient(TcpClient socket)
         }
 
         // Main message loop
-        buffer.Clear();
         while (true)
         {
-            var bytesRead = await stream.ReadAsync(readBuffer, 0, readBuffer.Length);
-            if (bytesRead == 0) break;
+            var result = await reader.ReadAsync(cts.Token);
+            var buffer = result.Buffer;
 
-            buffer.AddRange(readBuffer.Take(bytesRead));
-
+            var consumed = buffer.Start;
             while (true)
             {
-                var pkg = Package.Decode(buffer.ToArray());
+                var tempBuffer = buffer.Slice(consumed);
+                var pkg = Package.Decode(ref tempBuffer);
                 if (pkg == null) break;
 
-                // Remove processed package from buffer
-                var pkgSize = 4 + pkg.Length;
-                buffer.RemoveRange(0, pkgSize);
-
                 await ProcessPackageAsync(pkg, player!);
+                consumed = buffer.GetPosition(4 + pkg.Length, consumed);
             }
+
+            reader.AdvanceTo(consumed, buffer.End);
         }
     }
     catch (IOException)
@@ -317,6 +317,9 @@ async Task HandleClient(TcpClient socket)
     }
     finally
     {
+        await reader.CompleteAsync();
+        await writer.CompleteAsync();
+
         if (player is not null)
         {
             lock (playersLock)
@@ -353,10 +356,12 @@ async Task ProcessPackageAsync(Package pkg, Player player)
         case PackageType.Heartbeat:
             // Send heartbeat response
             var heartbeatPkg = Package.Encode(PackageType.Heartbeat, null);
-            if (player.Stream != null)
+            if (player.Writer != null)
             {
-                await player.Stream.WriteAsync(heartbeatPkg, 0, heartbeatPkg.Length);
-                await player.Stream.FlushAsync();
+                var memory = player.Writer.GetMemory(heartbeatPkg.Length);
+                heartbeatPkg.CopyTo(memory.Span);
+                player.Writer.Advance(heartbeatPkg.Length);
+                await player.Writer.FlushAsync(cts.Token);
             }
             break;
 

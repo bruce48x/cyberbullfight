@@ -244,10 +244,13 @@ class Room
         {
             try
             {
-                if (player.Stream != null)
+                if (player.Writer != null)
                 {
-                    player.Stream.WriteAsync(dataPkg, 0, dataPkg.Length).Wait();
-                    player.Stream.FlushAsync().Wait();
+                    var memory = player.Writer.GetMemory(dataPkg.Length);
+                    dataPkg.CopyTo(memory.Span);
+                    player.Writer.Advance(dataPkg.Length);
+                    // 使用 FlushAsync 但同步等待（在游戏循环中）
+                    player.Writer.FlushAsync().AsTask().Wait();
                 }
             }
             catch
