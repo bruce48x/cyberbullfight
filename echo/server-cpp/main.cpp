@@ -2,11 +2,11 @@
 #include <csignal>
 #include <cstring>
 #include <atomic>
-#include <map>
 #include <memory>
 #include <fcntl.h>
 #include <errno.h>
 #include <vector>
+#include <thread>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -17,14 +17,21 @@
 #include "coroutine.hpp"
 #include "json.hpp"
 #include "poller.hpp"
+#include "worker.hpp"
 
 using json = nlohmann::json;
 
 constexpr int PORT = 3010;
 std::atomic<bool> running{true};
 int server_fd = -1;
-std::map<int, std::shared_ptr<server::Session>> sessions;
-server::Scheduler scheduler;
+std::vector<std::unique_ptr<WorkerThread>> workers;
+std::atomic<int> next_worker{0};
+
+int set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
 void signal_handler(int) {
     std::cout << "\n[main] Shutting down server..." << std::endl;
@@ -33,12 +40,10 @@ void signal_handler(int) {
         shutdown(server_fd, SHUT_RDWR);
         ::close(server_fd);
     }
-}
-
-int set_nonblocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0) return -1;
-    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    // Signal all workers to stop
+    for (auto& worker : workers) {
+        worker->stop();
+    }
 }
 
 int main() {
@@ -60,6 +65,26 @@ int main() {
             resp["msg"] = body;
             return resp.dump();
         });
+
+    // Detect CPU core count and create worker threads
+    unsigned int num_workers = std::thread::hardware_concurrency();
+    if (num_workers == 0) {
+        num_workers = 4; // Fallback to 4 if detection fails
+    }
+    // Use all cores, or num_workers - 1 if you want to reserve one for main thread
+    // Here we use all cores since main thread only does accept()
+    std::cout << "[main] Detected " << num_workers << " CPU cores, creating " << num_workers << " worker threads" << std::endl;
+
+    // Create worker threads
+    workers.resize(num_workers);
+    for (unsigned int i = 0; i < num_workers; ++i) {
+        auto worker = std::make_unique<WorkerThread>(static_cast<int>(i), running);
+        if (!worker->start()) {
+            std::cerr << "[main] Failed to start worker-" << i << std::endl;
+            return 1;
+        }
+        workers[i] = std::move(worker);
+    }
 
     // Create socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -92,13 +117,14 @@ int main() {
         return 1;
     }
 
-    // Create platform-specific poller (epoll on Linux, kqueue on macOS)
-    Poller poller;
-    if (!poller.is_valid()) {
+    // Main thread only handles accepting new connections
+    // Use a simple poller for the server socket
+    Poller main_poller;
+    if (!main_poller.is_valid()) {
         std::cerr << "[main] Failed to create poller\n";
         return 1;
     }
-    if (!poller.add_fd(server_fd)) {
+    if (!main_poller.add_fd(server_fd)) {
         std::cerr << "[main] Failed to add server socket to poller\n";
         return 1;
     }
@@ -108,24 +134,20 @@ int main() {
     std::cout << "[main] Server listening on port " << PORT << std::endl;
 
     while (running) {
-        // Calculate timeout based on coroutine scheduler
-        auto timeout_ms = scheduler.next_timeout();
-        int timeout = timeout_ms.count() > 1000 ? 1000 : static_cast<int>(timeout_ms.count());
-        
-        int nfds = poller.wait(events, timeout);
+        int timeout = 1000; // 1 second timeout
+        int nfds = main_poller.wait(events, timeout);
         if (nfds < 0) {
             if (errno == EINTR) continue;
             std::cerr << "[main] poller wait error\n";
             break;
         }
         if (nfds == 0) {
-            scheduler.tick();
-            continue;
+            continue; // Timeout, check running flag
         }
 
         for (const auto& ev : events) {
             if (ev.fd == server_fd && ev.readable) {
-                // New connection
+                // New connection - accept and distribute to worker threads
                 while (true) {
                     sockaddr_in client_addr{};
                     socklen_t client_len = sizeof(client_addr);
@@ -140,72 +162,30 @@ int main() {
                         break;
                     }
 
-                    // Set client socket to non-blocking
-                    if (set_nonblocking(client_fd) < 0) {
-                        std::cerr << "[main] Failed to set client socket non-blocking\n";
-                        ::close(client_fd);
-                        continue;
-                    }
-
                     char ip[INET_ADDRSTRLEN];
                     inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
                     std::cout << "[main] Client connected: " << ip << ":" << ntohs(client_addr.sin_port) << std::endl;
 
-                    // Add client socket to poller
-                    if (!poller.add_fd(client_fd)) {
-                        std::cerr << "[main] Failed to add client socket to poller\n";
-                        ::close(client_fd);
-                        continue;
-                    }
+                    // Distribute connection to a worker thread using round-robin
+                    int worker_idx = next_worker.fetch_add(1) % num_workers;
+                    auto& worker = workers[worker_idx];
 
-                    // Create session
-                    auto session = std::make_shared<server::Session>(client_fd, scheduler);
-                    sessions[client_fd] = session;
-                    session->start();
-                }
-            } else {
-                // Client socket event
-                int client_fd = ev.fd;
-                auto it = sessions.find(client_fd);
-                if (it == sessions.end()) {
-                    continue;
-                }
-
-                auto session = it->second;
-
-                if (ev.error) {
-                    // Connection error or hangup
-                    session->close();
-                    poller.remove_fd(client_fd);
-                    sessions.erase(it);
-                    continue;
-                }
-
-                if (ev.readable) {
-                    // Data available to read
-                    if (!session->handle_read()) {
-                        // Connection closed
-                        session->close();
-                        poller.remove_fd(client_fd);
-                        sessions.erase(it);
-                    }
+                    worker->enqueue_connection(client_fd);
                 }
             }
         }
-
-        // Process coroutine scheduler
-        scheduler.tick();
     }
 
-    // Cleanup
-    for (auto& [fd, session] : sessions) {
-        session->close();
-        ::close(fd);
+    // Wait for all worker threads to finish
+    std::cout << "[main] Waiting for worker threads to finish..." << std::endl;
+    for (auto& worker : workers) {
+        worker->stop();
+        worker->join();
     }
-    sessions.clear();
 
     if (server_fd >= 0) ::close(server_fd);
 
+    std::cout << "[main] Server shutdown complete" << std::endl;
     return 0;
 }
 

@@ -112,7 +112,7 @@ nohup ./benchmark.sh -n server-go \
 # 客户端
 nohup ./benchmark.sh -n client-go \
 -i bruce48li/cyberbullfight-client-go \
--e "SERVER_HOST=172.20.3.38" \
+-e "SERVER_HOST=172.20.3.227" \
 -e "COUNT=1000" \
 -d 60 > benchmark.log 2>&1 &
 ```

@@ -16,6 +16,7 @@ echo/client-go/client-go
 # cpp
 **/build/
 cmake-build-debug-wsl
+.cache
 
 # .NET
 bin/

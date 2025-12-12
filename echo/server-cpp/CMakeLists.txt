@@ -9,5 +9,6 @@ add_executable(server-cpp
     session.cpp
     protocol.cpp
     poller.cpp
+    worker.cpp
 )
 
