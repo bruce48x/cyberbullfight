@@ -105,14 +105,30 @@ class Room
 
                 AdvanceWorld();
 
-                // 检查是否所有玩家都死亡
-                if (!_players.Values.Any(p => p.Alive))
-                {
-                    _status = RoomStatus.Waiting;
-                    continue;
-                }
+                // 统计存活玩家数量
+                var alivePlayers = _players.Values.Where(p => p.Alive).ToList();
+                var aliveCount = alivePlayers.Count;
 
-                state = GetCurrentState();
+                // 如果只剩一个玩家存活，判定该玩家获胜，结束游戏
+                if (aliveCount == 1)
+                {
+                    var winner = alivePlayers[0];
+                    Console.WriteLine($"Room {_roomId}: Player {winner.Id} ({winner.Name}) wins with score {winner.Score}!");
+                    _status = RoomStatus.Waiting;
+                    state = GetCurrentState();
+                }
+                // 如果所有玩家都死亡，结束游戏
+                else if (aliveCount == 0)
+                {
+                    Console.WriteLine($"Room {_roomId}: All players dead, game over.");
+                    _status = RoomStatus.Waiting;
+                    state = GetCurrentState();
+                }
+                else
+                {
+                    // 游戏继续，正常发送状态
+                    state = GetCurrentState();
+                }
             }
 
             // 在锁外部广播状态
@@ -150,7 +166,21 @@ class Room
         }
     }
 
-    // 检查房间是否可以关闭（没有玩家或所有玩家都死亡且游戏已结束）
+    // 检查游戏是否已结束（只剩一个玩家存活或所有玩家都死亡）
+    public bool IsGameFinished()
+    {
+        lock (_stateLock)
+        {
+            if (_status != RoomStatus.Playing)
+                return false;
+            
+            var aliveCount = _players.Values.Count(p => p.Alive);
+            // 只剩一个玩家存活或所有玩家都死亡
+            return aliveCount <= 1;
+        }
+    }
+
+    // 检查房间是否可以关闭（没有玩家或游戏已结束）
     public bool CanClose()
     {
         lock (_stateLock)
@@ -159,8 +189,8 @@ class Room
             if (_players.Count == 0)
                 return true;
             
-            // 如果游戏状态是Waiting且所有玩家都死亡，可以关闭
-            if (_status == RoomStatus.Waiting && AreAllPlayersDead())
+            // 如果游戏状态是Waiting（游戏已结束），可以关闭
+            if (_status == RoomStatus.Waiting)
                 return true;
             
             return false;

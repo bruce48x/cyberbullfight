@@ -95,7 +95,7 @@ async Task MatchLoop(CancellationToken cancellationToken)
     }
 }
 
-// 房间清理循环：检查房间是否应该关闭，如果所有玩家都死亡，将玩家重新加入匹配队列
+// 房间清理循环：检查房间是否应该关闭，游戏结束后将玩家重新加入匹配队列
 async Task RoomCleanupLoop(CancellationToken cancellationToken)
 {
     while (!cancellationToken.IsCancellationRequested)
@@ -154,7 +154,7 @@ async Task RoomCleanupLoop(CancellationToken cancellationToken)
             Console.WriteLine($"Room cleanup loop error: {ex}");
         }
 
-        await Task.Delay(500, cancellationToken); // 每500ms检查一次
+        await Task.Delay(200, cancellationToken); // 每200ms检查一次，更快响应游戏结束
     }
 }
 
