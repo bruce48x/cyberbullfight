@@ -1,37 +1,41 @@
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
 using System.Linq;
 using SnakeGame.Server.Protocol;
+using SnakeGame.Server;
 
-// Snake server using Pomelo protocol. Accepts TCP clients, runs an authoritative
-// game loop, and broadcasts world state.
+// Snake server with matchmaking and room system.
 
 var width = 32;
 var height = 18;
 var tick = TimeSpan.FromMilliseconds(160);
+var matchSize = 2; // 默认匹配人数
 var listener = new TcpListener(IPAddress.Any, 5000);
 listener.Start();
 
-Console.WriteLine("Snake server listening on 0.0.0.0:5000");
+Console.WriteLine($"Snake server listening on 0.0.0.0:5000 (Match size: {matchSize})");
 
-var stateLock = new object();
-var rng = new Random();
-var players = new Dictionary<int, Player>();
-var foods = new List<Pos>();
-var nextId = 1;
+var playersLock = new object();
+var roomsLock = new object();
+var allPlayers = new Dictionary<int, Player>(); // 所有连接的玩家
+var rooms = new Dictionary<int, Room>(); // 所有房间
+var matchQueue = new MatchQueue(matchSize);
+var nextPlayerId = 1;
+var nextRoomId = 1;
 
 var jsonOptions = new JsonSerializerOptions
 {
     PropertyNameCaseInsensitive = true
 };
 
-// Pre-spawn a food.
-EnsureFood();
+var cts = new CancellationTokenSource();
 
-// Start game loop.
-_ = Task.Run(GameLoop);
+// 启动匹配处理循环
+_ = Task.Run(() => MatchLoop(cts.Token));
+
+// 启动房间清理循环
+_ = Task.Run(() => RoomCleanupLoop(cts.Token));
 
 while (true)
 {
@@ -41,30 +45,116 @@ while (true)
 
 // --- Local functions ---
 
-async Task GameLoop()
+// 匹配循环：定期检查匹配队列，当人数达到要求时创建房间
+async Task MatchLoop(CancellationToken cancellationToken)
 {
-    while (true)
+    while (!cancellationToken.IsCancellationRequested)
     {
-        await Task.Delay(tick);
-        List<Player> snapshot;
-        List<Pos> foodSnapshot;
-        lock (stateLock)
+        try
         {
-            AdvanceWorld();
-            snapshot = players.Values.Select(p => p.Clone()).ToList();
-            foodSnapshot = foods.ToList();
+            var matchedPlayers = matchQueue.TryMatch();
+            if (matchedPlayers != null && matchedPlayers.Count > 0)
+            {
+                // 创建新房间
+                int roomId;
+                Room room;
+                lock (roomsLock)
+                {
+                    roomId = nextRoomId++;
+                    room = new Room(roomId, width, height, tick);
+                    rooms[roomId] = room;
+                }
+
+                // 将玩家添加到房间
+                foreach (var player in matchedPlayers)
+                {
+                    lock (playersLock)
+                    {
+                        if (allPlayers.ContainsKey(player.Id))
+                        {
+                            player.Status = PlayerStatus.InGame;
+                            room.AddPlayer(player);
+                            Console.WriteLine($"Player {player.Id} ({player.Name}) joined room {roomId}");
+                        }
+                    }
+                }
+
+                // 启动房间游戏
+                room.StartGame();
+                _ = Task.Run(() => room.GameLoopAsync(cancellationToken));
+                
+                Console.WriteLine($"Room {roomId} started with {matchedPlayers.Count} players");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Match loop error: {ex}");
         }
 
-        var state = new ServerState
-        {
-            Tick = Environment.TickCount,
-            Width = width,
-            Height = height,
-            Foods = foodSnapshot,
-            Players = snapshot.Select(p => p.ToView()).ToList()
-        };
+        await Task.Delay(100, cancellationToken); // 每100ms检查一次匹配
+    }
+}
 
-        BroadcastState(state);
+// 房间清理循环：检查房间是否应该关闭，如果所有玩家都死亡，将玩家重新加入匹配队列
+async Task RoomCleanupLoop(CancellationToken cancellationToken)
+{
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        try
+        {
+            List<int> roomsToClose = new();
+            List<Player> playersToRematch = new();
+
+            lock (roomsLock)
+            {
+                foreach (var kvp in rooms)
+                {
+                    var room = kvp.Value;
+                    if (room.CanClose())
+                    {
+                        // 获取房间内的玩家
+                        var playerIds = room.GetPlayerIds();
+                        lock (playersLock)
+                        {
+                            foreach (var playerId in playerIds)
+                            {
+                                if (allPlayers.TryGetValue(playerId, out var player))
+                                {
+                                    playersToRematch.Add(player);
+                                    player.RoomId = null;
+                                    player.Status = PlayerStatus.Matching;
+                                    player.Alive = true; // 重置状态
+                                }
+                            }
+                        }
+                        roomsToClose.Add(kvp.Key);
+                    }
+                }
+            }
+
+            // 关闭房间
+            foreach (var roomId in roomsToClose)
+            {
+                lock (roomsLock)
+                {
+                    rooms.Remove(roomId);
+                    Console.WriteLine($"Room {roomId} closed");
+                }
+            }
+
+            // 将玩家重新加入匹配队列
+            foreach (var player in playersToRematch)
+            {
+                matchQueue.Enqueue(player);
+                Console.WriteLine($"Player {player.Id} ({player.Name}) returned to match queue");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Room cleanup loop error: {ex}");
+        }
+
+        await Task.Delay(500, cancellationToken); // 每500ms检查一次
     }
 }
 
@@ -112,12 +202,18 @@ async Task HandleClient(TcpClient socket)
                     ? name?.ToString() 
                     : null;
 
-                lock (stateLock)
+                lock (playersLock)
                 {
-                    var id = nextId++;
-                    player = CreatePlayer(id, playerName ?? $"Player{id}");
-                    player.Stream = stream;
-                    players[id] = player;
+                    var id = nextPlayerId++;
+                    player = new Player
+                    {
+                        Id = id,
+                        Name = playerName ?? $"Player{id}",
+                        Stream = stream,
+                        Status = PlayerStatus.Matching,
+                        RoomId = null
+                    };
+                    allPlayers[id] = player;
                 }
 
                 // Send handshake response
@@ -148,7 +244,10 @@ async Task HandleClient(TcpClient socket)
                 await stream.FlushAsync();
 
                 buffer.Clear();
-                Console.WriteLine($"Player {player.Id} ({player.Name}) connected");
+                Console.WriteLine($"Player {player.Id} ({player.Name}) connected, joining match queue");
+
+                // 将玩家加入匹配队列
+                matchQueue.Enqueue(player);
                 break;
             }
             else
@@ -186,26 +285,6 @@ async Task HandleClient(TcpClient socket)
             }
         }
 
-        // Send initial state
-        List<Player> snapshot;
-        List<Pos> foodSnapshot;
-        lock (stateLock)
-        {
-            snapshot = players.Values.Select(p => p.Clone()).ToList();
-            foodSnapshot = foods.ToList();
-        }
-
-        var initialState = new ServerState
-        {
-            Tick = Environment.TickCount,
-            Width = width,
-            Height = height,
-            Foods = foodSnapshot,
-            Players = snapshot.Select(p => p.ToView()).ToList()
-        };
-
-        await SendStateAsync(stream, initialState);
-
         // Main message loop
         buffer.Clear();
         while (true)
@@ -240,10 +319,28 @@ async Task HandleClient(TcpClient socket)
     {
         if (player is not null)
         {
-            lock (stateLock)
+            lock (playersLock)
             {
-                players.Remove(player.Id);
+                allPlayers.Remove(player.Id);
             }
+
+            // 如果玩家在房间中，从房间移除
+            if (player.RoomId.HasValue)
+            {
+                lock (roomsLock)
+                {
+                    if (rooms.TryGetValue(player.RoomId.Value, out var room))
+                    {
+                        room.RemovePlayer(player.Id);
+                    }
+                }
+            }
+            else
+            {
+                // 如果玩家在匹配队列中，从队列移除
+                matchQueue.Remove(player);
+            }
+
             Console.WriteLine($"Player {player.Id} disconnected");
         }
     }
@@ -256,8 +353,11 @@ async Task ProcessPackageAsync(Package pkg, Player player)
         case PackageType.Heartbeat:
             // Send heartbeat response
             var heartbeatPkg = Package.Encode(PackageType.Heartbeat, null);
-            await player.Stream!.WriteAsync(heartbeatPkg, 0, heartbeatPkg.Length);
-            await player.Stream.FlushAsync();
+            if (player.Stream != null)
+            {
+                await player.Stream.WriteAsync(heartbeatPkg, 0, heartbeatPkg.Length);
+                await player.Stream.FlushAsync();
+            }
             break;
 
         case PackageType.Data:
@@ -280,13 +380,14 @@ async Task ProcessPackageAsync(Package pkg, Player player)
                 {
                     if (Enum.TryParse<Direction>(dirObj?.ToString(), true, out var dir))
                     {
-                        lock (stateLock)
+                        // 如果玩家在房间中，将移动指令传递给房间
+                        if (player.RoomId.HasValue)
                         {
-                            if (players.TryGetValue(player.Id, out var p))
+                            lock (roomsLock)
                             {
-                                if (!IsOpposite(p.Direction, dir))
+                                if (rooms.TryGetValue(player.RoomId.Value, out var room))
                                 {
-                                    p.Pending = dir;
+                                    room.HandlePlayerMove(player.Id, dir);
                                 }
                             }
                         }
@@ -295,250 +396,4 @@ async Task ProcessPackageAsync(Package pkg, Player player)
             }
             break;
     }
-}
-
-async Task SendStateAsync(NetworkStream stream, ServerState state)
-{
-    var stateData = JsonSerializer.SerializeToUtf8Bytes(state);
-    var pushMsg = Message.Encode(0, MessageType.Push, false, "snake.state", stateData);
-    var dataPkg = Package.Encode(PackageType.Data, pushMsg);
-    await stream.WriteAsync(dataPkg, 0, dataPkg.Length);
-    await stream.FlushAsync();
-}
-
-void BroadcastState(ServerState state)
-{
-    var stateData = JsonSerializer.SerializeToUtf8Bytes(state);
-    var pushMsg = Message.Encode(0, MessageType.Push, false, "snake.state", stateData);
-    var dataPkg = Package.Encode(PackageType.Data, pushMsg);
-
-    List<Player> targets;
-    lock (stateLock)
-    {
-        targets = players.Values.ToList();
-    }
-
-    var failed = new List<int>();
-    foreach (var p in targets)
-    {
-        try
-        {
-            if (p.Stream != null)
-            {
-                p.Stream.WriteAsync(dataPkg, 0, dataPkg.Length).Wait();
-                p.Stream.FlushAsync().Wait();
-            }
-        }
-        catch
-        {
-            failed.Add(p.Id);
-        }
-    }
-
-    if (failed.Count > 0)
-    {
-        lock (stateLock)
-        {
-            foreach (var id in failed)
-            {
-                players.Remove(id);
-            }
-        }
-    }
-}
-
-void AdvanceWorld()
-{
-    EnsureFood();
-    if (players.Count == 0) return;
-
-    // Build occupancy map.
-    var occupancy = new HashSet<Pos>();
-    foreach (var p in players.Values.Where(p => p.Alive))
-    {
-        if (p.Segments.Count == 0) continue;
-        foreach (var seg in p.Segments)
-        {
-            occupancy.Add(seg);
-        }
-    }
-
-    foreach (var p in players.Values.Where(p => p.Alive))
-    {
-        if (p.Segments.Count == 0) continue;
-        var lastNode = p.Segments.Last;
-        var firstNode = p.Segments.First;
-        if (lastNode is null || firstNode is null) continue;
-        
-        // Allow moving into tail since it will vacate.
-        occupancy.Remove(lastNode.Value);
-
-        if (!IsOpposite(p.Direction, p.Pending))
-        {
-            p.Direction = p.Pending;
-        }
-
-        var nextHead = Step(firstNode.Value, p.Direction);
-        var hitWall = nextHead.X < 0 || nextHead.X >= width || nextHead.Y < 0 || nextHead.Y >= height;
-        var hitBody = occupancy.Contains(nextHead);
-        if (hitWall || hitBody)
-        {
-            p.Alive = false;
-            p.Segments.Clear();
-            continue;
-        }
-
-        var ate = false;
-        for (var i = 0; i < foods.Count; i++)
-        {
-            if (foods[i].Equals(nextHead))
-            {
-                foods.RemoveAt(i);
-                ate = true;
-                p.Score += 1;
-                break;
-            }
-        }
-
-        p.Segments.AddFirst(nextHead);
-        if (!ate)
-        {
-            p.Segments.RemoveLast();
-        }
-        occupancy.Add(nextHead);
-    }
-
-    // Respawn food if needed.
-    EnsureFood();
-}
-
-void EnsureFood()
-{
-    const int targetFood = 1;
-    while (foods.Count < targetFood)
-    {
-        var candidate = new Pos(rng.Next(0, width), rng.Next(0, height));
-        if (players.Values.Any(p => p.Segments.Any(s => s.Equals(candidate)))) continue;
-        foods.Add(candidate);
-    }
-}
-
-Player CreatePlayer(int id, string name)
-{
-    Pos origin;
-    int attempts = 0;
-    while (true)
-    {
-        origin = new Pos(rng.Next(2, width - 2), rng.Next(2, height - 2));
-        var body = new[]
-        {
-            origin,
-            origin with { X = origin.X - 1 },
-            origin with { X = origin.X - 2 }
-        };
-
-        var collision = players.Values.Any(p => p.Segments.Any(s => body.Contains(s)));
-        if (!collision || attempts++ > 100)
-        {
-            break;
-        }
-    }
-
-    var segs = new LinkedList<Pos>();
-    segs.AddFirst(origin);
-    segs.AddLast(origin with { X = origin.X - 1 });
-    segs.AddLast(origin with { X = origin.X - 2 });
-
-    return new Player
-    {
-        Id = id,
-        Name = name,
-        Direction = Direction.Right,
-        Pending = Direction.Right,
-        Segments = segs
-    };
-}
-
-Pos Step(Pos p, Direction d) =>
-    d switch
-    {
-        Direction.Up => p with { Y = p.Y - 1 },
-        Direction.Down => p with { Y = p.Y + 1 },
-        Direction.Left => p with { X = p.X - 1 },
-        Direction.Right => p with { X = p.X + 1 },
-        _ => p
-    };
-
-bool IsOpposite(Direction a, Direction b) =>
-    (a, b) switch
-    {
-        (Direction.Up, Direction.Down) => true,
-        (Direction.Down, Direction.Up) => true,
-        (Direction.Left, Direction.Right) => true,
-        (Direction.Right, Direction.Left) => true,
-        _ => false
-    };
-
-// --- Types ---
-
-class Player
-{
-    public int Id { get; set; }
-    public string Name { get; set; } = "Player";
-    public bool Alive { get; set; } = true;
-    public int Score { get; set; }
-    public Direction Direction { get; set; }
-    public Direction Pending { get; set; }
-    public LinkedList<Pos> Segments { get; set; } = new();
-    public NetworkStream? Stream { get; set; }
-
-    public Player Clone() => new()
-    {
-        Id = Id,
-        Name = Name,
-        Alive = Alive,
-        Score = Score,
-        Direction = Direction,
-        Pending = Pending,
-        Segments = new LinkedList<Pos>(Segments.Select(s => s))
-    };
-
-    public PlayerView ToView() => new()
-    {
-        Id = Id,
-        Name = Name,
-        Alive = Alive,
-        Score = Score,
-        Direction = Direction,
-        Segments = Segments.ToList()
-    };
-}
-
-record struct Pos(int X, int Y);
-
-enum Direction
-{
-    Up,
-    Down,
-    Left,
-    Right
-}
-
-class ServerState
-{
-    public int Tick { get; set; }
-    public int Width { get; set; }
-    public int Height { get; set; }
-    public List<Pos> Foods { get; set; } = new();
-    public List<PlayerView> Players { get; set; } = new();
-}
-
-class PlayerView
-{
-    public int Id { get; set; }
-    public string Name { get; set; } = "";
-    public bool Alive { get; set; }
-    public int Score { get; set; }
-    public Direction Direction { get; set; }
-    public List<Pos> Segments { get; set; } = new();
 }
