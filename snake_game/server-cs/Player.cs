@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Net.Sockets;
 using System.Text.Json;
 using SnakeGame.Server.Protocol;
 
@@ -13,7 +14,7 @@ class Player
     public Direction Direction { get; set; }
     public Direction Pending { get; set; }
     public LinkedList<Pos> Segments { get; set; } = new();
-    public PipeWriter? Writer { get; set; }
+    public Socket? Socket { get; set; }
     public PlayerStatus Status { get; set; } = PlayerStatus.Matching;
     public int? RoomId { get; set; }
 
@@ -26,6 +27,7 @@ class Player
         Direction = Direction,
         Pending = Pending,
         Segments = new LinkedList<Pos>(Segments.Select(s => s)),
+        Socket = Socket,
         Status = Status,
         RoomId = RoomId
     };

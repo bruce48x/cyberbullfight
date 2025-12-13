@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Net.Sockets;
 using System.Text.Json;
 using SnakeGame.Server.Protocol;
 
@@ -70,7 +71,7 @@ class Room
     }
 
     // 开始游戏
-    public void StartGame()
+    public async Task StartGameAsync()
     {
         ServerState? initialState = null;
         lock (_stateLock)
@@ -86,7 +87,7 @@ class Room
         // 在锁外部发送初始状态
         if (initialState != null)
         {
-            BroadcastState(initialState);
+            await BroadcastStateAsync(initialState);
         }
     }
 
@@ -134,7 +135,7 @@ class Room
             // 在锁外部广播状态
             if (state != null)
             {
-                BroadcastState(state);
+                await BroadcastStateAsync(state);
             }
         }
     }
@@ -226,7 +227,7 @@ class Room
     }
 
     // 广播状态给房间内所有玩家
-    private void BroadcastState(ServerState state)
+    private async Task BroadcastStateAsync(ServerState state)
     {
         var stateData = JsonSerializer.SerializeToUtf8Bytes(state);
         var pushMsg = Message.Encode(0, MessageType.Push, false, "snake.state", stateData);
@@ -244,13 +245,18 @@ class Room
         {
             try
             {
-                if (player.Writer != null)
+                if (player.Socket != null)
                 {
-                    var memory = player.Writer.GetMemory(dataPkg.Length);
-                    dataPkg.CopyTo(memory.Span);
-                    player.Writer.Advance(dataPkg.Length);
-                    // 使用 FlushAsync 但同步等待（在游戏循环中）
-                    player.Writer.FlushAsync().AsTask().Wait();
+                    // 使用 Socket.SendAsync 直接发送，减少数据复制
+                    int totalSent = 0;
+                    var data = new ReadOnlyMemory<byte>(dataPkg);
+                    while (totalSent < data.Length)
+                    {
+                        var remaining = data.Slice(totalSent);
+                        var sent = await player.Socket.SendAsync(remaining, System.Net.Sockets.SocketFlags.None);
+                        if (sent == 0) break;
+                        totalSent += sent;
+                    }
                 }
             }
             catch

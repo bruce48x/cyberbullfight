@@ -13,8 +13,9 @@ var width = 32;
 var height = 18;
 var tick = TimeSpan.FromMilliseconds(160);
 var matchSize = 2; // 默认匹配人数
-var listener = new TcpListener(IPAddress.Any, 5000);
-listener.Start();
+var listener = new System.Net.Sockets.Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+listener.Bind(new IPEndPoint(IPAddress.Any, 5000));
+listener.Listen(128);
 
 Console.WriteLine($"Snake server listening on 0.0.0.0:5000 (Match size: {matchSize})");
 
@@ -41,11 +42,60 @@ _ = Task.Run(() => RoomCleanupLoop(cts.Token));
 
 while (true)
 {
-    var client = await listener.AcceptTcpClientAsync();
-    _ = Task.Run(() => HandleClient(client));
+    var socket = await listener.AcceptAsync();
+    _ = Task.Run(() => HandleClient(socket));
 }
 
 // --- Local functions ---
+
+// 接收循环：使用 Socket.ReceiveAsync 直接将数据写入 Pipe，减少数据复制
+async Task ReceiveLoop(System.Net.Sockets.Socket socket, PipeWriter writer, CancellationToken cancellationToken)
+{
+    const int minimumBufferSize = 1024;
+    try
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var memory = writer.GetMemory(minimumBufferSize);
+            var bytesRead = await socket.ReceiveAsync(memory, SocketFlags.None, cancellationToken);
+            if (bytesRead == 0) break; // 连接关闭
+
+            writer.Advance(bytesRead);
+
+            var result = await writer.FlushAsync(cancellationToken);
+            if (result.IsCompleted) break;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Receive loop error: {ex}");
+    }
+    finally
+    {
+        await writer.CompleteAsync();
+    }
+}
+
+// 发送数据：使用 Socket.SendAsync 直接发送，减少数据复制
+async Task SendDataAsync(System.Net.Sockets.Socket socket, ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+{
+    try
+    {
+        int totalSent = 0;
+        while (totalSent < data.Length)
+        {
+            var remaining = data.Slice(totalSent);
+            var sent = await socket.SendAsync(remaining, SocketFlags.None, cancellationToken);
+            if (sent == 0) break;
+            totalSent += sent;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Send error: {ex}");
+        throw;
+    }
+}
 
 // 匹配循环：定期检查匹配队列，当人数达到要求时创建房间
 async Task MatchLoop(CancellationToken cancellationToken)
@@ -82,7 +132,7 @@ async Task MatchLoop(CancellationToken cancellationToken)
                 }
 
                 // 启动房间游戏
-                room.StartGame();
+                await room.StartGameAsync();
                 _ = Task.Run(() => room.GameLoopAsync(cancellationToken));
                 
                 Console.WriteLine($"Room {roomId} started with {matchedPlayers.Count} players");
@@ -160,14 +210,11 @@ async Task RoomCleanupLoop(CancellationToken cancellationToken)
     }
 }
 
-async Task HandleClient(TcpClient socket)
+async Task HandleClient(System.Net.Sockets.Socket socket)
 {
-    using var client = socket;
-    var stream = client.GetStream();
-    
-    // 使用 System.IO.Pipelines 优化 IO
-    var reader = PipeReader.Create(stream);
-    var writer = PipeWriter.Create(stream);
+    var pipe = new Pipe();
+    var reader = pipe.Reader;
+    var receivingTask = Task.Run(() => ReceiveLoop(socket, pipe.Writer, cts.Token));
     
     Player? player = null;
 
@@ -209,7 +256,7 @@ async Task HandleClient(TcpClient socket)
                     {
                         Id = id,
                         Name = playerName ?? $"Player{id}",
-                        Writer = writer,
+                        Socket = socket,
                         Status = PlayerStatus.Matching,
                         RoomId = null
                     };
@@ -240,10 +287,7 @@ async Task HandleClient(TcpClient socket)
 
                 var responseBody = JsonSerializer.SerializeToUtf8Bytes(handshakeResponse);
                 var responsePkg = Package.Encode(PackageType.Handshake, responseBody);
-                var responseMemory = writer.GetMemory(responsePkg.Length);
-                responsePkg.CopyTo(responseMemory.Span);
-                writer.Advance(responsePkg.Length);
-                await writer.FlushAsync(cts.Token);
+                await SendDataAsync(socket, responsePkg, cts.Token);
 
                 var consumed = buffer.GetPosition(4 + pkg.Length);
                 reader.AdvanceTo(consumed);
@@ -317,8 +361,16 @@ async Task HandleClient(TcpClient socket)
     }
     finally
     {
+        try
+        {
+            socket.Shutdown(SocketShutdown.Both);
+            socket.Close();
+        }
+        catch { }
+
+        await pipe.Writer.CompleteAsync();
         await reader.CompleteAsync();
-        await writer.CompleteAsync();
+        await receivingTask;
 
         if (player is not null)
         {
@@ -356,12 +408,9 @@ async Task ProcessPackageAsync(Package pkg, Player player)
         case PackageType.Heartbeat:
             // Send heartbeat response
             var heartbeatPkg = Package.Encode(PackageType.Heartbeat, null);
-            if (player.Writer != null)
+            if (player.Socket != null)
             {
-                var memory = player.Writer.GetMemory(heartbeatPkg.Length);
-                heartbeatPkg.CopyTo(memory.Span);
-                player.Writer.Advance(heartbeatPkg.Length);
-                await player.Writer.FlushAsync(cts.Token);
+                await SendDataAsync(player.Socket, heartbeatPkg, cts.Token);
             }
             break;
 
