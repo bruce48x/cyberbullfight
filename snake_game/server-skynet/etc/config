@@ -1,0 +1,15 @@
+workspace = "."
+thread = 8
+logpath = "."
+harbor = 0
+start = "main"
+bootstrap = "snlua bootstrap"
+lualoader = "lualib/loader.lua"
+snax = workspace.."/service/?.lua"
+luaservice = workspace.."/service/?.lua;"..workspace.."/skynet/service/?.lua"
+cpath = workspace.."/skynet/cservice/?.so"
+lua_path = workspace.."/lualib/?.lua;"..workspace.."/skynet/lualib/?.lua"
+lua_cpath = workspace.."/skynet/luaclib/?.so"
+logger = nil
+logservice = "snlua"
+

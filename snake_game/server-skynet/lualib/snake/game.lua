@@ -1,0 +1,426 @@
+-- Game logic: Player, Room, MatchQueue
+-- Compatible with C# server logic
+
+local M = {}
+
+-- Direction enum
+M.DIRECTION = {
+    UP = "Up",
+    DOWN = "Down",
+    LEFT = "Left",
+    RIGHT = "Right",
+}
+
+-- Player status
+M.PLAYER_STATUS = {
+    MATCHING = "Matching",
+    IN_GAME = "InGame",
+}
+
+-- Room status
+M.ROOM_STATUS = {
+    WAITING = "Waiting",
+    PLAYING = "Playing",
+}
+
+-- Position
+function M.new_pos(x, y)
+    return {x = x, y = y}
+end
+
+function M.pos_equals(a, b)
+    return a.x == b.x and a.y == b.y
+end
+
+-- Player
+function M.new_player(id, name, fd)
+    return {
+        id = id,
+        name = name or ("Player" .. id),
+        fd = fd,
+        alive = true,
+        score = 0,
+        direction = M.DIRECTION.RIGHT,
+        pending = M.DIRECTION.RIGHT,
+        segments = {}, -- linked list of positions
+        status = M.PLAYER_STATUS.MATCHING,
+        room_id = nil,
+    }
+end
+
+function M.player_to_view(player)
+    local segments_list = {}
+    local node = player.segments.first
+    while node do
+        table.insert(segments_list, {x = node.value.x, y = node.value.y})
+        node = node.next
+    end
+    return {
+        id = player.id,
+        name = player.name,
+        alive = player.alive,
+        score = player.score,
+        direction = player.direction,
+        segments = segments_list,
+    }
+end
+
+-- Simple linked list implementation
+function M.new_linked_list()
+    return {first = nil, last = nil, count = 0}
+end
+
+function M.linked_list_add_first(list, value)
+    local node = {value = value, prev = nil, next = list.first}
+    if list.first then
+        list.first.prev = node
+    else
+        list.last = node
+    end
+    list.first = node
+    list.count = list.count + 1
+end
+
+function M.linked_list_add_last(list, value)
+    local node = {value = value, prev = list.last, next = nil}
+    if list.last then
+        list.last.next = node
+    else
+        list.first = node
+    end
+    list.last = node
+    list.count = list.count + 1
+end
+
+function M.linked_list_remove_last(list)
+    if not list.last then
+        return nil
+    end
+    local value = list.last.value
+    if list.last.prev then
+        list.last.prev.next = nil
+        list.last = list.last.prev
+    else
+        list.first = nil
+        list.last = nil
+    end
+    list.count = list.count - 1
+    return value
+end
+
+function M.linked_list_clear(list)
+    list.first = nil
+    list.last = nil
+    list.count = 0
+end
+
+-- MatchQueue
+function M.new_match_queue(match_size)
+    match_size = match_size or 2
+    return {
+        match_size = match_size,
+        queue = {},
+    }
+end
+
+function M.match_queue_enqueue(mq, player)
+    -- Check if player already in queue
+    for _, p in ipairs(mq.queue) do
+        if p.id == player.id then
+            return
+        end
+    end
+    table.insert(mq.queue, player)
+    player.status = M.PLAYER_STATUS.MATCHING
+end
+
+function M.match_queue_try_match(mq)
+    if #mq.queue < mq.match_size then
+        return nil
+    end
+    
+    local matched = {}
+    for i = 1, mq.match_size do
+        table.insert(matched, table.remove(mq.queue, 1))
+    end
+    return matched
+end
+
+function M.match_queue_remove(mq, player)
+    for i, p in ipairs(mq.queue) do
+        if p.id == player.id then
+            table.remove(mq.queue, i)
+            return
+        end
+    end
+end
+
+-- Room
+function M.new_room(room_id, width, height, tick_ms)
+    width = width or 32
+    height = height or 18
+    tick_ms = tick_ms or 160
+    
+    return {
+        room_id = room_id,
+        width = width,
+        height = height,
+        tick_ms = tick_ms,
+        status = M.ROOM_STATUS.WAITING,
+        players = {},
+        foods = {},
+        rng = math.random,
+    }
+end
+
+function M.room_add_player(room, player)
+    if room.status ~= M.ROOM_STATUS.WAITING then
+        return false
+    end
+    
+    if room.players[player.id] then
+        return false
+    end
+    
+    -- Initialize player position
+    local pos = M.room_find_spawn_position(room)
+    local segs = M.new_linked_list()
+    M.linked_list_add_first(segs, pos)
+    M.linked_list_add_last(segs, {x = pos.x - 1, y = pos.y})
+    M.linked_list_add_last(segs, {x = pos.x - 2, y = pos.y})
+    
+    player.segments = segs
+    player.direction = M.DIRECTION.RIGHT
+    player.pending = M.DIRECTION.RIGHT
+    player.alive = true
+    player.score = 0
+    player.room_id = room.room_id
+    player.status = M.PLAYER_STATUS.IN_GAME
+    
+    room.players[player.id] = player
+    return true
+end
+
+function M.room_remove_player(room, player_id)
+    room.players[player_id] = nil
+end
+
+function M.room_get_player_ids(room)
+    local ids = {}
+    for id, _ in pairs(room.players) do
+        table.insert(ids, id)
+    end
+    return ids
+end
+
+function M.room_can_close(room)
+    if not next(room.players) then
+        return true
+    end
+    if room.status == M.ROOM_STATUS.WAITING then
+        return true
+    end
+    return false
+end
+
+function M.room_handle_player_move(room, player_id, dir)
+    local player = room.players[player_id]
+    if not player then
+        return
+    end
+    
+    if not M.is_opposite(player.direction, dir) then
+        player.pending = dir
+    end
+end
+
+function M.room_get_current_state(room)
+    local players_list = {}
+    for _, player in pairs(room.players) do
+        table.insert(players_list, M.player_to_view(player))
+    end
+    
+    return {
+        tick = os.time() * 1000, -- Use timestamp in milliseconds
+        width = room.width,
+        height = room.height,
+        foods = room.foods,
+        players = players_list,
+    }
+end
+
+function M.room_advance_world(room)
+    M.room_ensure_food(room)
+    if not next(room.players) then
+        return
+    end
+    
+    -- Build occupancy map
+    local occupancy = {}
+    for _, player in pairs(room.players) do
+        if player.alive and player.segments.count > 0 then
+            local node = player.segments.first
+            while node do
+                local key = string.format("%d,%d", node.value.x, node.value.y)
+                occupancy[key] = true
+                node = node.next
+            end
+        end
+    end
+    
+    -- Move each player
+    for _, player in pairs(room.players) do
+        if not player.alive or player.segments.count == 0 then
+            goto continue
+        end
+        
+        local last_node = player.segments.last
+        local first_node = player.segments.first
+        if not last_node or not first_node then
+            goto continue
+        end
+        
+        -- Allow moving to tail since it will be freed
+        local last_key = string.format("%d,%d", last_node.value.x, last_node.value.y)
+        occupancy[last_key] = nil
+        
+        -- Update direction
+        if not M.is_opposite(player.direction, player.pending) then
+            player.direction = player.pending
+        end
+        
+        -- Calculate next head position
+        local next_head = M.step(first_node.value, player.direction)
+        local hit_wall = next_head.x < 0 or next_head.x >= room.width or 
+                        next_head.y < 0 or next_head.y >= room.height
+        local next_key = string.format("%d,%d", next_head.x, next_head.y)
+        local hit_body = occupancy[next_key] == true
+        
+        if hit_wall or hit_body then
+            player.alive = false
+            M.linked_list_clear(player.segments)
+            goto continue
+        end
+        
+        -- Check if ate food
+        local ate = false
+        for i, food in ipairs(room.foods) do
+            if food.x == next_head.x and food.y == next_head.y then
+                table.remove(room.foods, i)
+                ate = true
+                player.score = player.score + 1
+                break
+            end
+        end
+        
+        -- Move snake
+        M.linked_list_add_first(player.segments, next_head)
+        if not ate then
+            M.linked_list_remove_last(player.segments)
+        end
+        
+        -- Add new head to occupancy
+        occupancy[next_key] = true
+        
+        ::continue::
+    end
+    
+    M.room_ensure_food(room)
+end
+
+function M.room_ensure_food(room)
+    local target_food = 1
+    while #room.foods < target_food do
+        local candidate = {
+            x = math.random(0, room.width - 1),
+            y = math.random(0, room.height - 1),
+        }
+        
+        -- Check collision with players
+        local collision = false
+        for _, player in pairs(room.players) do
+            if player.segments.count > 0 then
+                local node = player.segments.first
+                while node do
+                    if node.value.x == candidate.x and node.value.y == candidate.y then
+                        collision = true
+                        break
+                    end
+                    node = node.next
+                end
+                if collision then break end
+            end
+        end
+        
+        if not collision then
+            table.insert(room.foods, candidate)
+        end
+    end
+end
+
+function M.room_find_spawn_position(room)
+    local attempts = 0
+    while true do
+        local pos = {
+            x = math.random(2, room.width - 3),
+            y = math.random(2, room.height - 3),
+        }
+        local body = {
+            pos,
+            {x = pos.x - 1, y = pos.y},
+            {x = pos.x - 2, y = pos.y},
+        }
+        
+        local collision = false
+        for _, player in pairs(room.players) do
+            if player.segments.count > 0 then
+                local node = player.segments.first
+                while node do
+                    for _, b in ipairs(body) do
+                        if node.value.x == b.x and node.value.y == b.y then
+                            collision = true
+                            break
+                        end
+                    end
+                    if collision then break end
+                    node = node.next
+                end
+                if collision then break end
+            end
+        end
+        
+        if not collision or attempts > 100 then
+            return pos
+        end
+        attempts = attempts + 1
+    end
+end
+
+function M.step(pos, dir)
+    if dir == M.DIRECTION.UP then
+        return {x = pos.x, y = pos.y - 1}
+    elseif dir == M.DIRECTION.DOWN then
+        return {x = pos.x, y = pos.y + 1}
+    elseif dir == M.DIRECTION.LEFT then
+        return {x = pos.x - 1, y = pos.y}
+    elseif dir == M.DIRECTION.RIGHT then
+        return {x = pos.x + 1, y = pos.y}
+    end
+    return pos
+end
+
+function M.is_opposite(a, b)
+    if a == M.DIRECTION.UP and b == M.DIRECTION.DOWN then
+        return true
+    elseif a == M.DIRECTION.DOWN and b == M.DIRECTION.UP then
+        return true
+    elseif a == M.DIRECTION.LEFT and b == M.DIRECTION.RIGHT then
+        return true
+    elseif a == M.DIRECTION.RIGHT and b == M.DIRECTION.LEFT then
+        return true
+    end
+    return false
+end
+
+return M
+
