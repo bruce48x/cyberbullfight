@@ -7,6 +7,6 @@
 [submodule "snake_game/server-skynet/skynet"]
 	path = snake_game/server-skynet/skynet
 	url = https://github.com/cloudwu/skynet.git
-[submodule "snake_game/server-skynet/bewater"]
-	path = snake_game/server-skynet/bewater
-	url = https://github.com/zhangshiqian1214/bewater.git
+[submodule "snake_game/server-skynet/3rd/cjson"]
+	path = snake_game/server-skynet/3rd/cjson
+	url = https://github.com/cloudwu/lua-cjson.git
