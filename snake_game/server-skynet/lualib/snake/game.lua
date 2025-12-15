@@ -169,7 +169,8 @@ function M.new_room(room_id, width, height, tick_ms)
         status = M.ROOM_STATUS.WAITING,
         players = {},
         foods = {},
-        rng = math.random,
+        -- Note: rng removed to avoid serialization issues when passing room object
+        -- Code uses math.random directly instead
     }
 end
 
@@ -195,7 +196,8 @@ function M.room_add_player(room, player)
     player.alive = true
     player.score = 0
     player.room_id = room.room_id
-    player.status = M.PLAYER_STATUS.IN_GAME
+    -- Note: player.status should be set by caller (match_loop), not here
+    -- This matches server-cs behavior where Room.AddPlayer doesn't set status
     
     room.players[player.id] = player
     return true

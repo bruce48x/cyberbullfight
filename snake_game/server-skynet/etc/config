@@ -1,15 +1,14 @@
-workspace = "."
-thread = 8
-logpath = "."
-harbor = 0
-start = "main"
+thread = 2
+cpath = "./skynet/cservice/?.so"
 bootstrap = "snlua bootstrap"
-lualoader = "lualib/loader.lua"
-snax = workspace.."/service/?.lua"
-luaservice = workspace.."/service/?.lua;"..workspace.."/skynet/service/?.lua"
-cpath = workspace.."/skynet/cservice/?.so"
-lua_path = workspace.."/lualib/?.lua;"..workspace.."/skynet/lualib/?.lua"
-lua_cpath = workspace.."/skynet/luaclib/?.so"
-logger = nil
-logservice = "snlua"
 
+start = "main"
+harbor = 0
+
+lualoader = "./skynet/lualib/loader.lua"
+
+luaservice = "./service/?.lua;" .. "./service/?/init.lua;" .. "./skynet/service/?.lua;"
+
+lua_path = "./etc/?.lua;" .. "./lualib/?.lua;" .. "./skynet/lualib/?.lua;" .. "./skynet/lualib/?/init.lua;"
+
+lua_cpath = "./luaclib/?.so;" .. "./skynet/luaclib/?.so"

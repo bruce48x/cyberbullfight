@@ -2,7 +2,7 @@
 -- Handles game logic: matching, rooms, game loop
 
 local skynet = require "skynet"
-local json = require "snake.json"
+local json = require "cjson"
 local protocol = require "snake.protocol"
 local game = require "snake.game"
 
@@ -23,11 +23,20 @@ local next_room_id = 1
 
 -- Match loop: periodically check match queue and create rooms
 local function match_loop()
+    skynet.error("Match loop started")
     while true do
         skynet.sleep(1) -- 100ms (skynet.sleep uses centiseconds)
         
+        -- Debug: check queue size (access internal queue for debugging)
+        local queue_size = match_queue.queue and #match_queue.queue or 0
+        if queue_size > 0 then
+            skynet.error(string.format("Match queue size: %d, waiting for %d players", queue_size, MATCH_SIZE))
+        end
+        
         local matched_players = game.match_queue_try_match(match_queue)
         if matched_players and #matched_players > 0 then
+            skynet.error(string.format("Matched %d players", #matched_players))
+            
             -- Create new room
             local room_id = next_room_id
             next_room_id = next_room_id + 1
@@ -35,74 +44,46 @@ local function match_loop()
             rooms[room_id] = room
             
             -- Add players to room
+            -- matched_players contains references to players in the players table
             for _, player in ipairs(matched_players) do
-                local stored_player = players[player.id]
-                if stored_player then
-                    stored_player.status = game.PLAYER_STATUS.IN_GAME
-                    game.room_add_player(room, stored_player)
-                    skynet.error(string.format("Player %d (%s) joined room %d", stored_player.id, stored_player.name, room_id))
+                -- player is already a reference to players[player.id], no need to look it up again
+                if player and players[player.id] == player then
+                    -- Set player status before adding to room (equivalent to server-cs MatchLoop)
+                    player.status = game.PLAYER_STATUS.IN_GAME
+                    if game.room_add_player(room, player) then
+                        skynet.error(string.format("Player %d (%s) joined room %d", player.id, player.name, room_id))
+                    else
+                        skynet.error(string.format("Failed to add player %d to room %d", player.id, room_id))
+                    end
+                else
+                    skynet.error(string.format("Player %d not found or mismatch in players table", player and player.id or "nil"))
                 end
             end
             
-            -- Start game
-            room.status = game.ROOM_STATUS.PLAYING
-            local initialState = game.room_get_current_state(room)
-            skynet.send(skynet.self(), "lua", "broadcast_state", room_id, initialState)
-            
-            -- Start game loop
-            skynet.fork(function()
-                game_loop(room_id)
-            end)
-            
-            skynet.error(string.format("Room %d started with %d players", room_id, #matched_players))
-        end
-    end
-end
-
--- Game loop: advance world and broadcast state
-local function game_loop(room_id)
-    local room = rooms[room_id]
-    if not room then
-        return
-    end
-    
-    while true do
-        skynet.sleep(math.ceil(room.tick_ms / 10)) -- Convert ms to centiseconds
-        
-        if room.status ~= game.ROOM_STATUS.PLAYING then
-            break
-        end
-        
-        -- Advance world
-        game.room_advance_world(room)
-        
-        -- Check game end conditions
-        local alive_count = 0
-        local alive_players = {}
-        for _, player in pairs(room.players) do
-            if player.alive then
-                alive_count = alive_count + 1
-                table.insert(alive_players, player)
+            -- Start game (equivalent to room.StartGameAsync in server-cs)
+            -- Check room status and player count before starting
+            if room.status == game.ROOM_STATUS.WAITING and next(room.players) then
+                room.status = game.ROOM_STATUS.PLAYING
+                -- Ensure food is available (room_add_player already calls EnsureFood, but we ensure it again)
+                game.room_ensure_food(room)
+                local initialState = game.room_get_current_state(room)
+                skynet.send(skynet.self(), "lua", "broadcast_state", room_id, initialState)
+                
+                -- Create a new room service instance for this room
+                -- Pass room_id only, room service will fetch room object via get_room
+                local roomService = skynet.newservice("room")
+                skynet.send(roomService, "lua", "init", room_id)
+                room.room_service = roomService -- Store service reference
+                
+                skynet.error(string.format("Room %d started with %d players", room_id, #matched_players))
+            else
+                skynet.error(string.format("Failed to start room %d: status=%s, player_count=%d", 
+                    room_id, room.status, room.players and (function()
+                        local count = 0
+                        for _ in pairs(room.players) do count = count + 1 end
+                        return count
+                    end)() or 0))
             end
-        end
-        
-        if alive_count == 1 then
-            -- One player wins
-            local winner = alive_players[1]
-            skynet.error(string.format("Room %d: Player %d (%s) wins with score %d!", room_id, winner.id, winner.name, winner.score))
-            room.status = game.ROOM_STATUS.WAITING
-        elseif alive_count == 0 then
-            -- All players dead
-            skynet.error(string.format("Room %d: All players dead, game over.", room_id))
-            room.status = game.ROOM_STATUS.WAITING
-        end
-        
-        -- Broadcast state
-        local state = game.room_get_current_state(room)
-        skynet.send(skynet.self(), "lua", "broadcast_state", room_id, state)
-        
-        if room.status ~= game.ROOM_STATUS.PLAYING then
-            break
         end
     end
 end
@@ -149,12 +130,20 @@ end
 function CMD.start()
     skynet.fork(match_loop)
     skynet.fork(room_cleanup_loop)
+    skynet.error("match_loop service started")
+    return true -- Return value for skynet.call
 end
 
-function CMD.add_player(player)
-    players[player.id] = player
+function CMD.add_player(player_id, player_name, gate_service, fd)
+    skynet.error(string.format("CMD.add_player called: id=%d, name=%s, gate=%s, fd=%d", 
+        player_id, player_name or "nil", tostring(gate_service), fd or -1))
+    -- Create player object (fd and gate_service are stored in snake_gate, we just need reference)
+    local player = game.new_player(player_id, player_name, fd)
+    player.gate_service = gate_service
+    players[player_id] = player
     game.match_queue_enqueue(match_queue, player)
-    skynet.error(string.format("Player %d (%s) connected, joining match queue", player.id, player.name))
+    skynet.error(string.format("Player %d (%s) connected, joining match queue. Queue size: %d", 
+        player_id, player_name, match_queue.queue and #match_queue.queue or 0))
 end
 
 function CMD.remove_player(player_id)
@@ -184,9 +173,14 @@ function CMD.handle_player_move(player_id, dir)
     end
     
     local room = rooms[player.room_id]
-    if room then
-        game.room_handle_player_move(room, player_id, dir)
+    if room and room.room_service then
+        -- Delegate to room service
+        skynet.send(room.room_service, "lua", "handle_player_move", player_id, dir)
     end
+end
+
+function CMD.get_room(room_id)
+    return rooms[room_id]
 end
 
 function CMD.broadcast_state(room_id, state)
@@ -220,9 +214,13 @@ function CMD.broadcast_state(room_id, state)
 end
 
 skynet.start(function()
-    skynet.dispatch("lua", function(_, _, cmd, ...)
+    skynet.dispatch("lua", function(session, source, cmd, ...)
         local f = assert(CMD[cmd], cmd)
-        skynet.ret(skynet.pack(f(...)))
+        local result = f(...)
+        -- Only return response if there's a session (called via skynet.call)
+        if session ~= 0 then
+            skynet.ret(skynet.pack(result))
+        end
     end)
 end)
 

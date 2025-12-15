@@ -4,7 +4,11 @@
 local skynet = require "skynet"
 
 skynet.start(function()
-    local snake_gate = skynet.newservice("snake_gate")
-    skynet.call(snake_gate, "lua", "start")
+    -- 网关
+    local gateway = skynet.newservice("gateway")
+    skynet.call(gateway, "lua", "start")
+    -- 匹配
+    local matchLoop = skynet.uniqueservice("match_loop")
+    skynet.call(matchLoop, "lua", "start")
+    -- Note: Room services are created dynamically when rooms are created
 end)
-
