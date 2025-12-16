@@ -9,11 +9,16 @@
 
 ## 运行
 
-### 1. 编译 Skynet
+### 1. 编译
 
 ```bash
+# 编译 skynet
 cd snake_game/server-skynet/skynet
 make linux
+
+# 编译 cjson
+cd snake_game/server-skynet
+make
 ```
 
 ### 2. 启动服务端
@@ -56,10 +61,11 @@ dotnet run 127.0.0.1 5000 "我的名字"
 
 ## 服务说明
 
-- `snake_gate`: 处理 TCP 连接和协议编解码
-- `snake`: 处理游戏逻辑（匹配、房间、游戏循环）
+- `gateway`: 处理 TCP 连接和协议编解码
+- `session`: 代表客户端连接
+- `match_loop`: 处理匹配逻辑
+- `room`: 处理游戏逻辑（房间、游戏循环）
 
 ## 协议
 
-使用自定义的 Package 和 Message 协议，与 C# 版本完全兼容。
-
+使用 pomelo 协议，与 C# 版本完全兼容。

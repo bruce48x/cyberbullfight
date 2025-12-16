@@ -321,7 +321,9 @@ function M.room_advance_world(room)
             M.linked_list_remove_last(player.segments)
         end
         
-        -- Add new head to occupancy
+        -- Add new head to occupancy immediately (like server-cs)
+        -- This ensures that if two players try to move to the same position,
+        -- the second one will detect the collision
         occupancy[next_key] = true
         
         ::continue::
@@ -332,7 +334,8 @@ end
 
 function M.room_ensure_food(room)
     local target_food = 1
-    while #room.foods < target_food do
+    local attempts = 0
+    while #room.foods < target_food and attempts < 1000 do
         local candidate = {
             x = math.random(0, room.width - 1),
             y = math.random(0, room.height - 1),
@@ -357,6 +360,12 @@ function M.room_ensure_food(room)
         if not collision then
             table.insert(room.foods, candidate)
         end
+        attempts = attempts + 1
+    end
+    
+    if attempts >= 1000 then
+        -- Log warning if we couldn't find a position after many attempts
+        -- This shouldn't happen in normal gameplay
     end
 end
 
@@ -367,17 +376,25 @@ function M.room_find_spawn_position(room)
             x = math.random(2, room.width - 3),
             y = math.random(2, room.height - 3),
         }
+        -- Player body: head at pos, body at (pos.x-1, pos.y), tail at (pos.x-2, pos.y)
+        -- Player starts facing RIGHT, so first move will be to (pos.x+1, pos.y)
         local body = {
             pos,
             {x = pos.x - 1, y = pos.y},
             {x = pos.x - 2, y = pos.y},
         }
+        local first_move_pos = {x = pos.x + 1, y = pos.y}
         
         local collision = false
         for _, player in pairs(room.players) do
             if player.segments.count > 0 then
+                local player_head = player.segments.first.value
+                local player_first_move = {x = player_head.x + 1, y = player_head.y}
+                
+                -- Check collision with player's body segments
                 local node = player.segments.first
                 while node do
+                    -- Check if our body collides with player's body
                     for _, b in ipairs(body) do
                         if node.value.x == b.x and node.value.y == b.y then
                             collision = true
@@ -385,6 +402,19 @@ function M.room_find_spawn_position(room)
                         end
                     end
                     if collision then break end
+                    
+                    -- Check if our first move collides with player's head
+                    if first_move_pos.x == player_head.x and first_move_pos.y == player_head.y then
+                        collision = true
+                        break
+                    end
+                    
+                    -- Check if our head collides with player's first move
+                    if pos.x == player_first_move.x and pos.y == player_first_move.y then
+                        collision = true
+                        break
+                    end
+                    
                     node = node.next
                 end
                 if collision then break end

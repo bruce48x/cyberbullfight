@@ -7,10 +7,10 @@ local handshake = require "pomelo_handshake"
 ---@type HeartbeatHandler
 local heartbeat = require "pomelo_heartbeat"
 
-local helloHandler = require "handlers.hello"
+local moveHandler = require "handlers.move"
 
 local handlers = {}
-handlers[helloHandler.route] = helloHandler.handler
+handlers[moveHandler.route] = moveHandler.handler
 
 ---@class Session
 ---@field fd number
@@ -24,17 +24,62 @@ handlers[helloHandler.route] = helloHandler.handler
 ---@field reqId number 记录总共收到多少次请求
 local session = {}
 
+-- Store fd per session service instance
+local session_fd = nil
+
 local function process(fd)
     socket.start(fd)
 
+    session_fd = fd
     session.fd = fd
     session.heartbeatTimerSeq = 0
     session.reqId = 0
+    local player_id = fd -- Use fd as player_id (match_loop uses fd as player_id)
 
+    local game_loop_service = skynet.uniqueservice("match_loop")
+    local player_id = nil
+    local player_name = nil
+    
     local handler = protocol.createHandler({
         session = session,
         sendCallback = function(data)
             socket.write(fd, data)
+        end,
+        handshakeHandler = function(session_param, body, callback)
+            -- Parse handshake data to get player name
+            local cjson = require "cjson"
+            local ok, handshake_data = pcall(cjson.decode, body or "{}")
+            if ok and handshake_data then
+                player_name = handshake_data.name or ("User_" .. fd)
+            else
+                player_name = "User_" .. fd
+            end
+            
+            -- Create player in match_loop
+            player_id = skynet.call(game_loop_service, "lua", "create_player_on_handshake", fd, player_name, skynet.self())
+            
+            -- Prepare user data for handshake response
+            local user_data = {
+                id = player_id,
+                width = 32,
+                height = 18
+            }
+            
+            -- Call handshake handler with user data
+            callback(user_data)
+            
+            -- Store player_id in session for later use
+            session.player_id = player_id
+        end,
+        handshakeAckHandler = function(session_param)
+            -- Add player to match queue after handshake ack
+            skynet.error(string.format("[session] handshakeAckHandler called, player_id=%s", tostring(player_id)))
+            if player_id then
+                skynet.send(game_loop_service, "lua", "add_player_to_queue", player_id)
+                skynet.error(string.format("[session] Sent add_player_to_queue for player_id=%d", player_id))
+            else
+                skynet.error("[session] handshakeAckHandler: player_id is nil!")
+            end
         end,
         routeHandler = function(route, body)
             local handler = handlers[route]
@@ -49,8 +94,13 @@ local function process(fd)
             end
         end,
         notifyHandler = function(route, body)
-            skynet.error("[main] Notify received: route=" .. route .. ", body=" ..
-                             (body and cjson.encode(body) or "nil"))
+            local handler = handlers[route]
+            if handler then
+                handler(session, body)
+            else
+                skynet.error("[main] Notify received: route=" .. route .. ", body=" ..
+                                 (body and (type(body) == "string" and body or cjson.encode(body)) or "nil"))
+            end
         end,
         closeCallback = function()
             skynet.error("[main] Connection closed: fd=" .. fd)
@@ -58,15 +108,6 @@ local function process(fd)
         end
     })
     session.handler = handler
-
-    local game_loop_service = skynet.uniqueservice("match_loop")
-    -- local ok, err = pcall(function()
-    --     skynet.call(game_loop_service, "lua", "add_player", player.id, player.name, skynet.self(), fd)
-    -- end)
-    -- if not ok then
-    --     skynet.error(string.format("Failed to add player: %s", tostring(err)))
-    -- end
-    skynet.send(game_loop_service, "lua", "add_player", fd, "User_"..fd, skynet.self(), fd)
 
     while true do
         local readdata, remain = socket.read(fd)
@@ -82,6 +123,7 @@ local function process(fd)
         elseif type(readdata) == "string" then
             -- Only process string data
             if #readdata > 0 then
+                skynet.error(string.format("[session] Received %d bytes on fd=%d", #readdata, fd))
                 local result = handler:feed(readdata)
                 if result == -1 then
                     -- Invalid data, close connection
@@ -121,9 +163,41 @@ function CMD.start(source, fd)
     skynet.fork(process, fd)
 end
 
+function CMD.send(source, fd_param, data)
+    -- Send data to client via socket
+    -- Note: source is the caller's address, fd_param is the socket fd, data is the data to send
+    if not data then
+        -- If data is nil, then fd_param is actually the data and fd_param is missing
+        -- This means the call was: skynet.send(..., "send", fd, data)
+        -- But we received: (source, fd_param) where fd_param is actually data
+        skynet.error(string.format("[session] CMD.send: missing fd_param, source=%s, fd_param type=%s", 
+            tostring(source), type(fd_param)))
+        return
+    end
+    
+    skynet.error(string.format("[session] CMD.send called: session_fd=%s, fd_param=%s, data_len=%d", 
+        tostring(session_fd), tostring(fd_param), type(data) == "string" and #data or 0))
+    if session_fd and session_fd == fd_param then
+        if type(data) == "string" then
+            skynet.error(string.format("[session] Sending %d bytes to fd=%d", #data, fd_param))
+            socket.write(session_fd, data)
+        else
+            skynet.error(string.format("[session] send failed: data is not a string, type=%s", type(data)))
+        end
+    else
+        skynet.error(string.format("[session] send failed: fd mismatch (session_fd=%s, param=%s)", 
+            tostring(session_fd), tostring(fd_param)))
+    end
+end
+
 skynet.start(function()
     skynet.dispatch("lua", function(session, source, cmd, ...)
         local f = assert(CMD[cmd], cmd)
+        -- Debug: log all commands
+        if cmd == "send" then
+            skynet.error(string.format("[session] dispatch: cmd=%s, args count=%d, args=%s", 
+                cmd, select("#", ...), table.concat({...}, ", ")))
+        end
         local result = f(source, ...)
         -- Only return response if there's a session (called via skynet.call)
         if session ~= 0 then

@@ -44,6 +44,8 @@ local ProtocolState = {
 ---@field routeHandler function
 ---@field notifyHandler function
 ---@field closeCallback function
+---@field handshakeHandler function
+---@field handshakeAckHandler function
 local ProtocolHandler = {}
 ProtocolHandler.__index = ProtocolHandler
 
@@ -107,6 +109,14 @@ function ProtocolHandler:readHead(data, offset)
         self.packageSize = 4 + body_len
         self.packageBuffer = self.headBuffer
         self.packageOffset = 4
+        
+        -- If body_len is 0, package is complete (only header)
+        if body_len == 0 then
+            self:processPackage(self.packageBuffer)
+            self:reset()
+            return dend + 1
+        end
+        
         self.readState = ProtocolState.ST_BODY
     end
 
@@ -140,12 +150,52 @@ function ProtocolHandler:processPackage(pkg_data)
     end
 
     if pkg.type == package.TYPE_HANDSHAKE then
-        handshake:handleHandshake(self.session, pkg.body)
+        if self.handshakeHandler then
+            -- Use custom handshake handler if provided
+            self.handshakeHandler(self.session, pkg.body, function(user_data)
+                -- Prepare handshake response with user data
+                local sys_data = {
+                    heartbeat = 10, -- seconds
+                    dict = {}, -- Route dictionary (empty for now)
+                    protos = { -- Protobuf definitions (empty for now)
+                        client = {},
+                        server = {}
+                    }
+                }
+                local response = {
+                    code = 200, -- RES_OK
+                    sys = sys_data,
+                    user = user_data or {}
+                }
+                local cjson = require "cjson"
+                local response_body = cjson.encode(response)
+                local response_body_encoded = response_body or ""
+                local response_pkg = package.encode(package.TYPE_HANDSHAKE, response_body_encoded)
+                self.sendCallback(response_pkg)
+                self.session.connState = ConnectionState.ST_WAIT_ACK
+                -- Initialize heartbeat if needed
+                if sys_data.heartbeat > 0 then
+                    self.session.heartbeatInterval = sys_data.heartbeat * 100
+                    self.session.heartbeatTimeout = self.session.heartbeatInterval * 2
+                end
+            end)
+        else
+            -- Fallback to default handler
+            handshake:handleHandshake(self.session, pkg.body)
+        end
     elseif pkg.type == package.TYPE_HANDSHAKE_ACK then
-        handshake:handleHandshakeAck(self.session, function()
-            -- 触发心跳
+        if self.handshakeAckHandler then
+            -- Use custom handshake ack handler if provided
+            self.handshakeAckHandler(self.session)
+            -- Start heartbeat
             heartbeat:startHeartbeat(self.session)
-        end)
+        else
+            -- Fallback to default handler
+            handshake:handleHandshakeAck(self.session, function()
+                -- 触发心跳
+                heartbeat:startHeartbeat(self.session)
+            end)
+        end
     elseif pkg.type == package.TYPE_HEARTBEAT then
         heartbeat:handleHeartbeat(self.session)
     elseif pkg.type == package.TYPE_DATA then
@@ -445,6 +495,8 @@ function M.createHandler(opts)
     handler.routeHandler = opts.routeHandler
     handler.notifyHandler = opts.notifyHandler
     handler.closeCallback = opts.closeCallback
+    handler.handshakeHandler = opts.handshakeHandler
+    handler.handshakeAckHandler = opts.handshakeAckHandler
 
     return handler
 end
