@@ -2,13 +2,16 @@ local skynet = require "skynet"
 local socket = require "skynet.socket"
 ---@type PomeloProtocol
 local protocol = require "pomelo_protocol"
+local s = require "service"
+local runconfig = require "runconfig"
 
 local sessions = {}
 
-local CMD = {}
-
-function CMD.start(source)
-    local port = 5000
+function s.init()
+    local mynode = skynet.getenv("node")
+    local nodeCnf = runconfig[mynode]
+    local port = nodeCnf.gateway[s.id].port
+    
     local listenfd = socket.listen("0.0.0.0", port)
     skynet.error("listen on port :" .. port .. ", fd: " .. listenfd)
 
@@ -23,13 +26,4 @@ function CMD.start(source)
     return true -- Return value for skynet.call
 end
 
-skynet.start(function()
-    skynet.dispatch("lua", function(session, source, cmd, ...)
-        local f = assert(CMD[cmd])
-        local result = f(source, ...)
-        -- Only return response if there's a session (called via skynet.call)
-        if session ~= 0 then
-            skynet.ret(skynet.pack(result))
-        end
-    end)
-end)
+s.start(...)

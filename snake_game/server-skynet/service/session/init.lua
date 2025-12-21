@@ -6,6 +6,7 @@ local protocol = require "pomelo_protocol"
 local handshake = require "pomelo_handshake"
 ---@type HeartbeatHandler
 local heartbeat = require "pomelo_heartbeat"
+local s = require "service"
 
 local moveHandler = require "handlers.move"
 
@@ -158,12 +159,12 @@ end
 
 local CMD = {}
 
-function CMD.start(source, fd)
+function s.resp.start(source, fd)
     skynet.error("session service started")
     skynet.fork(process, fd)
 end
 
-function CMD.send(source, fd_param, data)
+function s.resp.send(source, fd_param, data)
     -- Send data to client via socket
     -- Note: source is the caller's address, fd_param is the socket fd, data is the data to send
     if not data then
@@ -190,18 +191,4 @@ function CMD.send(source, fd_param, data)
     end
 end
 
-skynet.start(function()
-    skynet.dispatch("lua", function(session, source, cmd, ...)
-        local f = assert(CMD[cmd], cmd)
-        -- Debug: log all commands
-        if cmd == "send" then
-            skynet.error(string.format("[session] dispatch: cmd=%s, args count=%d, args=%s", 
-                cmd, select("#", ...), table.concat({...}, ", ")))
-        end
-        local result = f(source, ...)
-        -- Only return response if there's a session (called via skynet.call)
-        if session ~= 0 then
-            skynet.ret(skynet.pack(result))
-        end
-    end)
-end)
+s.start(...)

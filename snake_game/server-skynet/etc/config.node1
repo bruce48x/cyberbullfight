@@ -12,3 +12,5 @@ luaservice = "./service/?.lua;" .. "./service/?/init.lua;" .. "./skynet/service/
 lua_path = "./etc/?.lua;" .. "./lualib/?.lua;" .. "./skynet/lualib/?.lua;" .. "./skynet/lualib/?/init.lua;"
 
 lua_cpath = "./luaclib/?.so;" .. "./skynet/luaclib/?.so"
+
+node = "node1"
