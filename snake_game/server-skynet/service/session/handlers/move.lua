@@ -1,10 +1,11 @@
 local skynet = require "skynet"
-local cjson = require "cjson"
+local json = require "cjson"
 local game = require "snake.game"
 
 local H = {
     route = "snake.move",
-    handler = function(session, body)
+    ---@param sess Session
+    handler = function(sess, body)
         local matchLoopService = skynet.uniqueservice("match_loop")
         
         if body and type(body) == "string" then
@@ -23,7 +24,7 @@ local H = {
                 end
                 
                 if dir then
-                    skynet.send(matchLoopService, "lua", "handle_player_move", player_id, dir)
+                    skynet.send(matchLoopService, "lua", "handle_player_move", sess.player_id, dir)
                 end
             end
         end

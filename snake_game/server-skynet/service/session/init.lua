@@ -1,5 +1,6 @@
 local skynet = require "skynet"
 local socket = require "skynet.socket"
+local cjson = require "cjson"
 ---@type PomeloProtocol
 local protocol = require "pomelo_protocol"
 ---@type HandshakeHandler
@@ -35,12 +36,11 @@ local function process(fd)
     session.fd = fd
     session.heartbeatTimerSeq = 0
     session.reqId = 0
-    local player_id = fd -- Use fd as player_id (match_loop uses fd as player_id)
+    local player_id = skynet.getenv("node") .. fd -- Use fd as player_id (match_loop uses fd as player_id)
+    local player_name = "User_" .. player_id
 
     local game_loop_service = skynet.uniqueservice("match_loop")
-    local player_id = nil
-    local player_name = nil
-    
+
     local handler = protocol.createHandler({
         session = session,
         sendCallback = function(data)
@@ -48,39 +48,25 @@ local function process(fd)
         end,
         handshakeHandler = function(session_param, body, callback)
             -- Parse handshake data to get player name
-            local cjson = require "cjson"
             local ok, handshake_data = pcall(cjson.decode, body or "{}")
-            if ok and handshake_data then
-                player_name = handshake_data.name or ("User_" .. fd)
-            else
-                player_name = "User_" .. fd
-            end
-            
-            -- Create player in match_loop
-            player_id = skynet.call(game_loop_service, "lua", "create_player_on_handshake", fd, player_name, skynet.self())
-            
+
             -- Prepare user data for handshake response
             local user_data = {
                 id = player_id,
                 width = 32,
                 height = 18
             }
-            
+
             -- Call handshake handler with user data
             callback(user_data)
-            
+
             -- Store player_id in session for later use
             session.player_id = player_id
         end,
         handshakeAckHandler = function(session_param)
             -- Add player to match queue after handshake ack
             skynet.error(string.format("[session] handshakeAckHandler called, player_id=%s", tostring(player_id)))
-            if player_id then
-                skynet.send(game_loop_service, "lua", "add_player_to_queue", player_id)
-                skynet.error(string.format("[session] Sent add_player_to_queue for player_id=%d", player_id))
-            else
-                skynet.error("[session] handshakeAckHandler: player_id is nil!")
-            end
+            skynet.send(game_loop_service, "lua", "add_player_to_queue", player_id, player_name, fd)
         end,
         routeHandler = function(route, body)
             local handler = handlers[route]
@@ -100,7 +86,7 @@ local function process(fd)
                 handler(session, body)
             else
                 skynet.error("[main] Notify received: route=" .. route .. ", body=" ..
-                                 (body and (type(body) == "string" and body or cjson.encode(body)) or "nil"))
+                    (body and (type(body) == "string" and body or cjson.encode(body)) or "nil"))
             end
         end,
         closeCallback = function()
@@ -141,7 +127,7 @@ local function process(fd)
         else
             -- Unexpected type
             skynet.error("[main] Socket read unexpected type: " .. type(readdata) .. ", value: " ..
-                             tostring(readdata))
+                tostring(readdata))
             handler:close()
             break
         end
@@ -152,12 +138,10 @@ function session.sendCallback(data)
     socket.write(session.fd, data)
 end
 
-function  session.handleTimeout()
+function session.handleTimeout()
     skynet.error("[main] Heartbeat timeout, closing connection: fd=" .. session.fd)
     socket.close(session.fd)
 end
-
-local CMD = {}
 
 function s.resp.start(source, fd)
     skynet.error("session service started")
@@ -171,12 +155,12 @@ function s.resp.send(source, fd_param, data)
         -- If data is nil, then fd_param is actually the data and fd_param is missing
         -- This means the call was: skynet.send(..., "send", fd, data)
         -- But we received: (source, fd_param) where fd_param is actually data
-        skynet.error(string.format("[session] CMD.send: missing fd_param, source=%s, fd_param type=%s", 
+        skynet.error(string.format("[session] CMD.send: missing fd_param, source=%s, fd_param type=%s",
             tostring(source), type(fd_param)))
         return
     end
-    
-    skynet.error(string.format("[session] CMD.send called: session_fd=%s, fd_param=%s, data_len=%d", 
+
+    skynet.error(string.format("[session] CMD.send called: session_fd=%s, fd_param=%s, data_len=%d",
         tostring(session_fd), tostring(fd_param), type(data) == "string" and #data or 0))
     if session_fd and session_fd == fd_param then
         if type(data) == "string" then
@@ -186,7 +170,7 @@ function s.resp.send(source, fd_param, data)
             skynet.error(string.format("[session] send failed: data is not a string, type=%s", type(data)))
         end
     else
-        skynet.error(string.format("[session] send failed: fd mismatch (session_fd=%s, param=%s)", 
+        skynet.error(string.format("[session] send failed: fd mismatch (session_fd=%s, param=%s)",
             tostring(session_fd), tostring(fd_param)))
     end
 end

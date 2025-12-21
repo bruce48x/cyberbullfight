@@ -6,8 +6,7 @@ local skynet = require "skynet"
 local json = require "cjson"
 local protocol = require "snake.protocol"
 local game = require "snake.game"
-
-local CMD = {}
+local s = require "service"
 
 -- Room data
 local room = nil
@@ -84,7 +83,7 @@ local function game_loop()
 end
 
 -- Initialize room service with room data
-function CMD.init(room_id_param, match_loop_service)
+function s.resp.init(room_id_param, match_loop_service)
     matchLoopService = match_loop_service or skynet.uniqueservice("match_loop")
     
     -- Register room service with match_loop (it will send room config via _init_room)
@@ -105,7 +104,7 @@ function CMD.init(room_id_param, match_loop_service)
 end
 
 -- Internal command to initialize room (called by match_loop)
-function CMD._init_room(room_config)
+function s.resp._init_room(room_config)
     -- Create room object
     room = game.new_room(room_config.room_id, room_config.width, room_config.height, room_config.tick_ms)
     -- Keep status as WAITING so room_add_player can add players
@@ -140,27 +139,17 @@ function CMD._init_room(room_config)
 end
 
 -- Handle player move (delegated from match_loop)
-function CMD.handle_player_move(player_id, dir)
+function s.resp.handle_player_move(player_id, dir)
     if room then
         game.room_handle_player_move(room, player_id, dir)
     end
 end
 
 -- Remove player from room
-function CMD.remove_player(player_id)
+function s.resp.remove_player(player_id)
     if room then
         game.room_remove_player(room, player_id)
     end
 end
 
-skynet.start(function()
-    skynet.dispatch("lua", function(session, source, cmd, ...)
-        local f = assert(CMD[cmd], cmd)
-        local result = f(...)
-        -- Only return response if there's a session (called via skynet.call)
-        if session ~= 0 then
-            skynet.ret(skynet.pack(result))
-        end
-    end)
-end)
-
+s.start(...)

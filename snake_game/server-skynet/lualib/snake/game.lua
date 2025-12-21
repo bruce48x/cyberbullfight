@@ -32,10 +32,26 @@ function M.pos_equals(a, b)
     return a.x == b.x and a.y == b.y
 end
 
--- Player
+---@class Player
+---@field player_id string
+---@field name string
+---@field fd number
+---@field alive boolean
+---@field score number
+---@field direction string
+---@field pending string
+---@field segments table
+---@field status string
+---@field room_id any
+local Player = {}
+
+---@param id string
+---@param name string
+---@param fd number
+---@return Player
 function M.new_player(id, name, fd)
     return {
-        id = id,
+        player_id = id,
         name = name or ("Player" .. id),
         fd = fd,
         alive = true,
@@ -114,7 +130,13 @@ function M.linked_list_clear(list)
     list.count = 0
 end
 
--- MatchQueue
+---@class MatchQueue
+---@field match_size number
+---@field queue table<number, Player>
+local MatchQueue = {}
+
+---@param match_size number
+---@return MatchQueue
 function M.new_match_queue(match_size)
     match_size = match_size or 2
     return {
@@ -134,13 +156,14 @@ function M.match_queue_enqueue(mq, player)
     player.status = M.PLAYER_STATUS.MATCHING
 end
 
+---@param mq MatchQueue
 function M.match_queue_try_match(mq)
     if #mq.queue < mq.match_size then
         return nil
     end
     
     local matched = {}
-    for i = 1, mq.match_size do
+    while  #matched < mq.match_size do
         table.insert(matched, table.remove(mq.queue, 1))
     end
     return matched

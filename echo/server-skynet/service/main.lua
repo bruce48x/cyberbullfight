@@ -1,7 +1,4 @@
 local skynet = require "skynet"
-local socket = require "skynet.socket"
-local protocol = require "pomelo_protocol"
-local cjson = require "cjson"
 
 skynet.start(function()
     skynet.error("[main] start")
