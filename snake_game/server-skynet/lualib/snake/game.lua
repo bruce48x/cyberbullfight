@@ -132,7 +132,7 @@ end
 
 ---@class MatchQueue
 ---@field match_size number
----@field queue table<number, Player>
+---@field queue Player[]
 local MatchQueue = {}
 
 ---@param match_size number
@@ -145,10 +145,12 @@ function M.new_match_queue(match_size)
     }
 end
 
+---@param mq MatchQueue
+---@param player Player
 function M.match_queue_enqueue(mq, player)
     -- Check if player already in queue
     for _, p in ipairs(mq.queue) do
-        if p.id == player.id then
+        if p.player_id == player.player_id then
             return
         end
     end
@@ -178,7 +180,20 @@ function M.match_queue_remove(mq, player)
     end
 end
 
--- Room
+---@class Room
+---@field room_id int
+---@field width int
+---@field height int
+---@field tick_ms int
+---@field status string
+---@field players Player[]
+---@field foods any[]
+
+---@param room_id int
+---@param width int
+---@param height int
+---@param tick_ms int
+---@return Room
 function M.new_room(room_id, width, height, tick_ms)
     width = width or 32
     height = height or 18

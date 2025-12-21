@@ -25,7 +25,8 @@ make
 
 ```bash
 cd snake_game/server-skynet
-./skynet/skynet etc/config
+./skynet/skynet etc/config.node1
+./skynet/skynet etc/config.node2
 ```
 
 服务端默认监听 `0.0.0.0:5000`

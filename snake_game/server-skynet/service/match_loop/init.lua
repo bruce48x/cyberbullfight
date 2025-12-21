@@ -15,6 +15,7 @@ local MATCH_SIZE = 2
 
 -- State
 local players = {} -- all connected players: [player_id] = player
+---@type table<int, Room>
 local rooms = {}   -- all rooms: [room_id] = room
 local match_queue = game.new_match_queue(MATCH_SIZE)
 local next_player_id = 1
@@ -31,66 +32,73 @@ local function match_loop()
             match_queue.queue = {}
         end
 
-        local matched_players = game.match_queue_try_match(match_queue)
-        if matched_players == nil then
-            return
-        end
-        if #matched_players <= 0 then
+        if #match_queue.queue < MATCH_SIZE then
             return
         end
 
-        -- Filter out players without valid network connections
-        local valid_players = {}
-        for _, player in ipairs(matched_players) do
-            -- Verify player exists, has valid connection (fd and gate_service), and is still in players table
-            if player and players[player.id] == player and player.fd and player.gate_service then
-                table.insert(valid_players, player)
+        -- local matched_players = game.match_queue_try_match(match_queue)
+        -- if matched_players == nil then
+        --     return
+        -- end
+        -- if #matched_players <= 0 then
+        --     return
+        -- end
+
+        -- -- Filter out players without valid network connections
+        -- local valid_players = {}
+        -- for _, player in ipairs(matched_players) do
+        --     -- Verify player exists, has valid connection (fd and gate_service), and is still in players table
+        --     if player and players[player.id] == player and player.fd and player.gate_service then
+        --         table.insert(valid_players, player)
+        --     else
+        --         skynet.error(string.format("Matched player %d has no valid connection, skipping",
+        --             player and player.id or -1))
+        --         -- Remove invalid player from queue and players table
+        --         if player then
+        --             game.match_queue_remove(match_queue, player)
+        --             if players[player.id] == player then
+        --                 players[player.id] = nil
+        --             end
+        --         end
+        --     end
+        -- end
+
+        -- -- Only create room if we have enough valid players
+        -- if #valid_players >= MATCH_SIZE then
+        skynet.error(string.format("Matched %d valid players", #match_queue.queue))
+
+        -- Create new room
+        local room_id = next_room_id
+        next_room_id = next_room_id + 1
+        local room = game.new_room(room_id, WIDTH, HEIGHT, TICK_MS)
+        rooms[room_id] = room
+
+        -- Add players to room
+        -- for _, player in ipairs(valid_players) do
+        for i = 1, MATCH_SIZE do
+            -- Set player status before adding to room (equivalent to server-cs MatchLoop)
+            local player = match_queue.queue[1]
+            player.status = game.PLAYER_STATUS.IN_GAME
+            if game.room_add_player(room, player) then
+                skynet.error(string.format("Player %d (%s) joined room %d", player.id, player.name, room_id))
             else
-                skynet.error(string.format("Matched player %d has no valid connection, skipping",
-                    player and player.id or -1))
-                -- Remove invalid player from queue and players table
-                if player then
-                    game.match_queue_remove(match_queue, player)
-                    if players[player.id] == player then
-                        players[player.id] = nil
-                    end
-                end
+                skynet.error(string.format("Failed to add player %d to room %d", player.id, room_id))
             end
+            table.remove(match_queue.queue, 1)
         end
 
-        -- Only create room if we have enough valid players
-        if #valid_players >= MATCH_SIZE then
-            skynet.error(string.format("Matched %d valid players", #valid_players))
+        -- Create a new room service instance for this room
+        -- Room service will create its own room object and manage game logic
+        local roomService = skynet.newservice("room")
+        skynet.send(roomService, "lua", "init", room_id, skynet.self())
+        room.room_service = roomService     -- Store service reference
 
-            -- Create new room
-            local room_id = next_room_id
-            next_room_id = next_room_id + 1
-            local room = game.new_room(room_id, WIDTH, HEIGHT, TICK_MS)
-            rooms[room_id] = room
+        -- Register room service (it will receive room config and create room object)
+        skynet.send(skynet.self(), "lua", "register_room_service", room_id, roomService)
 
-            -- Add players to room
-            for _, player in ipairs(valid_players) do
-                -- Set player status before adding to room (equivalent to server-cs MatchLoop)
-                player.status = game.PLAYER_STATUS.IN_GAME
-                if game.room_add_player(room, player) then
-                    skynet.error(string.format("Player %d (%s) joined room %d", player.id, player.name, room_id))
-                else
-                    skynet.error(string.format("Failed to add player %d to room %d", player.id, room_id))
-                end
-            end
-
-            -- Create a new room service instance for this room
-            -- Room service will create its own room object and manage game logic
-            local roomService = skynet.newservice("room")
-            skynet.send(roomService, "lua", "init", room_id, skynet.self())
-            room.room_service = roomService     -- Store service reference
-
-            -- Register room service (it will receive room config and create room object)
-            skynet.send(skynet.self(), "lua", "register_room_service", room_id, roomService)
-
-            skynet.error(string.format("Room %d started with %d players", room_id, #valid_players))
-        end
+        -- skynet.error(string.format("Room %d started with %d players", room_id, #valid_players))
     end
+    -- end
 end
 
 -- Room cleanup loop: check rooms that should be closed
