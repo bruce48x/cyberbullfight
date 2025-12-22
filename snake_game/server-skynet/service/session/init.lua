@@ -36,8 +36,8 @@ local function process(fd)
     session.fd = fd
     session.heartbeatTimerSeq = 0
     session.reqId = 0
-    local player_id = skynet.getenv("node") .. fd -- Use fd as player_id (match_loop uses fd as player_id)
-    local player_name = "User_" .. player_id
+    local player_id = fd -- Use fd as player_id (match_loop uses fd as player_id)
+    local player_name = "User_" .. skynet.getenv("node") .. "_" .. player_id
 
     local game_loop_service = skynet.uniqueservice("match_loop")
 
@@ -86,7 +86,7 @@ local function process(fd)
                 handler(session, body)
             else
                 skynet.error("[main] Notify received: route=" .. route .. ", body=" ..
-                    (body and (type(body) == "string" and body or cjson.encode(body)) or "nil"))
+                                 (body and (type(body) == "string" and body or cjson.encode(body)) or "nil"))
             end
         end,
         closeCallback = function()
@@ -126,8 +126,7 @@ local function process(fd)
             break
         else
             -- Unexpected type
-            skynet.error("[main] Socket read unexpected type: " .. type(readdata) .. ", value: " ..
-                tostring(readdata))
+            skynet.error("[main] Socket read unexpected type: " .. type(readdata) .. ", value: " .. tostring(readdata))
             handler:close()
             break
         end
@@ -170,8 +169,8 @@ function s.resp.send(source, fd_param, data)
             skynet.error(string.format("[session] send failed: data is not a string, type=%s", type(data)))
         end
     else
-        skynet.error(string.format("[session] send failed: fd mismatch (session_fd=%s, param=%s)",
-            tostring(session_fd), tostring(fd_param)))
+        skynet.error(string.format("[session] send failed: fd mismatch (session_fd=%s, param=%s)", tostring(session_fd),
+            tostring(fd_param)))
     end
 end
 

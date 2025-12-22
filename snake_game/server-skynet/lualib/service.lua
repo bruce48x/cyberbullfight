@@ -35,8 +35,9 @@ function M.send(node, srv, ...)
         return cluster.send(node, srv, "lua", ...)
     end
 end
+
 -- ============= 分发逻辑 =============
-function Dispatch(session, address, cmd, ...)
+local function dispatch(session, address, cmd, ...)
     local fun = M.resp[cmd]
     if not fun then
         skynet.ret()
@@ -55,8 +56,8 @@ function Dispatch(session, address, cmd, ...)
 end
 
 -- ============= 启动逻辑 =============
-function Init() 
-    skynet.dispatch("lua", Dispatch)
+local function init() 
+    skynet.dispatch("lua", dispatch)
     if M.init then
         M.init()
     end
@@ -65,7 +66,7 @@ end
 function M.start(name, id, ...)
     M.name = name
     M.id = tonumber(id)
-    skynet.start(Init)
+    skynet.start(init)
 end
 
 return M

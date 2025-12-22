@@ -1,6 +1,5 @@
 -- Snake game server service
 -- Handles game logic: matching, rooms, game loop
-
 local skynet = require "skynet"
 local json = require "cjson"
 local protocol = require "snake.protocol"
@@ -15,9 +14,11 @@ local MATCH_SIZE = 2
 
 -- State
 local players = {} -- all connected players: [player_id] = player
----@type table<int, Room>
-local rooms = {}   -- all rooms: [room_id] = room
+---@type table<integer, Room>
+local rooms = {} -- all rooms: [room_id] = room
 local match_queue = game.new_match_queue(MATCH_SIZE)
+---@type Player[]
+local queue = {}
 local next_player_id = 1
 local next_room_id = 1
 
@@ -27,76 +28,39 @@ local function match_loop()
     while true do
         skynet.sleep(10) -- 100ms
 
-        -- Ensure match_queue.queue exists and is valid
-        if not match_queue.queue then
-            match_queue.queue = {}
-        end
+        if #match_queue.queue >= MATCH_SIZE then
+            -- skynet.error(string.format("Matched %d valid players", #queue))
+            -- Create new room
+            local room_id = next_room_id
+            next_room_id = next_room_id + 1
+            local room = game.new_room(room_id, WIDTH, HEIGHT, TICK_MS)
+            rooms[room_id] = room
 
-        if #match_queue.queue < MATCH_SIZE then
-            return
-        end
-
-        -- local matched_players = game.match_queue_try_match(match_queue)
-        -- if matched_players == nil then
-        --     return
-        -- end
-        -- if #matched_players <= 0 then
-        --     return
-        -- end
-
-        -- -- Filter out players without valid network connections
-        -- local valid_players = {}
-        -- for _, player in ipairs(matched_players) do
-        --     -- Verify player exists, has valid connection (fd and gate_service), and is still in players table
-        --     if player and players[player.id] == player and player.fd and player.gate_service then
-        --         table.insert(valid_players, player)
-        --     else
-        --         skynet.error(string.format("Matched player %d has no valid connection, skipping",
-        --             player and player.id or -1))
-        --         -- Remove invalid player from queue and players table
-        --         if player then
-        --             game.match_queue_remove(match_queue, player)
-        --             if players[player.id] == player then
-        --                 players[player.id] = nil
-        --             end
-        --         end
-        --     end
-        -- end
-
-        -- -- Only create room if we have enough valid players
-        -- if #valid_players >= MATCH_SIZE then
-        skynet.error(string.format("Matched %d valid players", #match_queue.queue))
-
-        -- Create new room
-        local room_id = next_room_id
-        next_room_id = next_room_id + 1
-        local room = game.new_room(room_id, WIDTH, HEIGHT, TICK_MS)
-        rooms[room_id] = room
-
-        -- Add players to room
-        -- for _, player in ipairs(valid_players) do
-        for i = 1, MATCH_SIZE do
-            -- Set player status before adding to room (equivalent to server-cs MatchLoop)
-            local player = match_queue.queue[1]
-            player.status = game.PLAYER_STATUS.IN_GAME
-            if game.room_add_player(room, player) then
-                skynet.error(string.format("Player %d (%s) joined room %d", player.id, player.name, room_id))
-            else
-                skynet.error(string.format("Failed to add player %d to room %d", player.id, room_id))
+            -- Add players to room and collect their info
+            -- for _, player in ipairs(valid_players) do
+            for i = 1, MATCH_SIZE do
+                -- Set player status before adding to room (equivalent to server-cs MatchLoop)
+                local player = match_queue.queue[1]
+                player.status = game.PLAYER_STATUS.IN_GAME
+                
+                -- Store player in players table for later reference
+                players[player.player_id] = player
+                player.room_id = room_id
+                
+                if game.room_add_player(room, player) then
+                    skynet.error(string.format("Player %d (%s) joined room %d", player.player_id, player.name, room_id))
+                else
+                    skynet.error(string.format("Failed to add player %d to room %d", player.player_id, room_id))
+                end
+                table.remove(match_queue.queue, 1)
             end
-            table.remove(match_queue.queue, 1)
+
+            -- Create a new room service instance for this room
+            -- Room service will create its own room object and manage game logic
+            local roomService = skynet.newservice("room")
+            -- Store room service reference for later use
+            skynet.send(roomService, "lua", "init", room_id, skynet.self(), room)
         end
-
-        -- Create a new room service instance for this room
-        -- Room service will create its own room object and manage game logic
-        local roomService = skynet.newservice("room")
-        skynet.send(roomService, "lua", "init", room_id, skynet.self())
-        room.room_service = roomService     -- Store service reference
-
-        -- Register room service (it will receive room config and create room object)
-        skynet.send(skynet.self(), "lua", "register_room_service", room_id, roomService)
-
-        -- skynet.error(string.format("Room %d started with %d players", room_id, #valid_players))
     end
     -- end
 end
@@ -136,8 +100,8 @@ local function room_cleanup_loop()
                         else
                             -- Player has no valid connection, remove them completely
                             skynet.error(string.format(
-                                "Player %d (%s) has no valid connection, removing from players table", player.id, player
-                                .name))
+                                "Player %d (%s) has no valid connection, removing from players table", player.player_id,
+                                player.name))
                             players[player.id] = nil
                         end
                     end
@@ -170,6 +134,7 @@ end
 function s.resp.start()
     -- Ensure match queue is empty on startup (no residual players)
     match_queue.queue = {}
+    queue = {}
     -- Clear any residual players
     players = {}
     next_player_id = 1
@@ -181,6 +146,7 @@ function s.resp.start()
 end
 
 function s.resp.add_player_to_queue(player_id, name, fd)
+    skynet.error("[match_loop] add_player_to_queue() id = " .. player_id .. ", name = " .. name .. ", fd = " .. fd)
     local player = game.new_player(player_id, name, fd)
     game.match_queue_enqueue(match_queue, player)
 end
@@ -224,35 +190,6 @@ function s.resp.get_room(room_id)
     return nil
 end
 
-function s.resp.register_room_service(room_id_param, room_service)
-    -- Register room service
-    local room = rooms[room_id_param]
-    if room then
-        room.room_service = room_service
-        -- Send room configuration to room service (not the room object itself)
-        -- Room service will create its own room object
-        local room_config = {
-            room_id = room.room_id,
-            width = room.width,
-            height = room.height,
-            tick_ms = room.tick_ms,
-            players = {} -- Will be populated by room service
-        }
-        -- Get player IDs and basic info
-        for player_id, player in pairs(room.players) do
-            skynet.error(string.format("[match_loop] register_room_service: player_id=%d, player.fd=%s (type: %s)",
-                player_id, tostring(player.fd), type(player.fd)))
-            table.insert(room_config.players, {
-                id = player.id,
-                name = player.name,
-                fd = player.fd,
-                gate_service = player.gate_service
-            })
-        end
-        skynet.send(room_service, "lua", "_init_room", room_config)
-    end
-end
-
 -- Notify that room game ended (called by room service)
 function s.resp.room_game_ended(room_id_param)
     local room = rooms[room_id_param]
@@ -282,11 +219,11 @@ function s.resp.broadcast_state(room_id, state)
     for player_id, player in pairs(players) do
         if player.room_id == room_id then
             if player.fd and player.gate_service then
-                skynet.error(string.format("[match_loop] Sending to player %d: gate=%s, fd=%d (type: %s)",
-                    player_id, tostring(player.gate_service), player.fd, type(player.fd)))
+                skynet.error(string.format("[match_loop] Sending to player %d: gate=%s, fd=%d (type: %s)", player_id,
+                    tostring(player.gate_service), player.fd, type(player.fd)))
                 -- Debug: check player object
-                skynet.error(string.format("[match_loop] Player %d object: id=%s, fd=%s, gate=%s",
-                    player_id, tostring(player.id), tostring(player.fd), tostring(player.gate_service)))
+                skynet.error(string.format("[match_loop] Player %d object: id=%s, fd=%s, gate=%s", player_id,
+                    tostring(player.id), tostring(player.fd), tostring(player.gate_service)))
                 skynet.send(player.gate_service, "lua", "send", player.fd, data_pkg)
                 sent_count = sent_count + 1
             else

@@ -13,6 +13,7 @@ return {
     },
     -- 节点1
     node1 = {
+        matchloop = {},
         gateway = {
             [1] = { port = 5000 },
             [2] = { port = 5001 },
