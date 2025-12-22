@@ -7,12 +7,17 @@ local protocol = require "snake.protocol"
 local game = require "snake.game"
 local s = require "service"
 
--- Room data
+-- Configuration
+local WIDTH = 32
+local HEIGHT = 18
+local TICK_MS = 160
+
+---@type Room
 local room = nil
-local matchLoopService = nil
 
 -- Game loop: advance world and broadcast state (equivalent to Room.GameLoopAsync in server-cs)
 local function game_loop()
+    local matchLoopService = skynet.uniqueservice("match_loop")
     while true do
         if not room then
             break
@@ -83,13 +88,12 @@ local function game_loop()
 end
 
 -- Initialize room service with room data
----@param room_id_param integer
----@param match_loop_service string
----@param room Room
-function s.resp.init(room_id_param, match_loop_service, room)
-    skynet.error("[room] init() room_id = " .. room_id_param .. ", matchLoopService = " .. match_loop_service ..
-                     ", room = " .. room)
-    matchLoopService = match_loop_service or skynet.uniqueservice("match_loop")
+---@param room_id integer
+---@param players string
+function s.resp.init(source, room_id, players)
+    skynet.error("[room] init() room_id = " .. room_id .. ", room = " .. players)
+    local matchPlayers = json.decode(players)
+    room = game.new_room(room_id, WIDTH, HEIGHT, TICK_MS)
 
     -- Register room service with match_loop (it will send room config via _init_room)
     -- skynet.send(matchLoopService, "lua", "register_room_service", room_id_param, skynet.self())
@@ -100,6 +104,15 @@ function s.resp.init(room_id_param, match_loop_service, room)
     if not room then
         skynet.error(string.format("Room service %d failed to get room config", skynet.self()))
         return
+    end
+
+    for i, mp in ipairs(matchPlayers) do
+        local player = game.new_player(mp.player_id, mp.name, mp.fd)
+        if game.room_add_player(room, player) then
+            skynet.error(string.format("Player %d (%s) joined room %d", player.player_id, player.name, room_id))
+        else
+            skynet.error(string.format("Failed to add player %d to room %d", player.player_id, room_id))
+        end
     end
 
     -- Start game loop in a separate coroutine

@@ -34,6 +34,23 @@ function M.pos_equals(a, b)
     return a.x == b.x and a.y == b.y
 end
 
+---@class MatchPlayer
+---@field player_id string
+---@field name string
+---@field fd number
+
+---@param id string
+---@param name string
+---@param fd number
+---@return MatchPlayer
+function M.new_match_player(id, name, fd)
+    return {
+        player_id = id,
+        name = name or ("Player" .. id),
+        fd = fd,
+    }
+end
+
 ---@class Player
 ---@field player_id string
 ---@field name string
@@ -149,7 +166,7 @@ end
 
 ---@class MatchQueue
 ---@field match_size number
----@field queue Player[]
+---@field queue MatchPlayer[]
 
 ---@param match_size number
 ---@return MatchQueue
@@ -162,7 +179,7 @@ function M.new_match_queue(match_size)
 end
 
 ---@param mq MatchQueue
----@param player Player
+---@param player MatchPlayer
 function M.match_queue_enqueue(mq, player)
     -- Check if player already in queue
     for _, p in ipairs(mq.queue) do
@@ -222,7 +239,7 @@ function M.room_add_player(room, player)
         return false
     end
 
-    if room.players[player.id] then
+    if room.players[player.player_id] then
         return false
     end
 

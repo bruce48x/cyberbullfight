@@ -13,6 +13,7 @@ local TICK_MS = 160
 local MATCH_SIZE = 2
 
 -- State
+---@type table<integer, MatchPlayer>
 local players = {} -- all connected players: [player_id] = player
 ---@type table<integer, Room>
 local rooms = {} -- all rooms: [room_id] = room
@@ -37,29 +38,23 @@ local function match_loop()
             rooms[room_id] = room
 
             -- Add players to room and collect their info
-            -- for _, player in ipairs(valid_players) do
+            local roomPlayers = {}
             for i = 1, MATCH_SIZE do
                 -- Set player status before adding to room (equivalent to server-cs MatchLoop)
                 local player = match_queue.queue[1]
                 player.status = game.PLAYER_STATUS.IN_GAME
-                
+
                 -- Store player in players table for later reference
                 players[player.player_id] = player
-                player.room_id = room_id
-                
-                if game.room_add_player(room, player) then
-                    skynet.error(string.format("Player %d (%s) joined room %d", player.player_id, player.name, room_id))
-                else
-                    skynet.error(string.format("Failed to add player %d to room %d", player.player_id, room_id))
-                end
+                table.insert(roomPlayers, player)
+
                 table.remove(match_queue.queue, 1)
             end
 
             -- Create a new room service instance for this room
             -- Room service will create its own room object and manage game logic
             local roomService = skynet.newservice("room")
-            -- Store room service reference for later use
-            skynet.send(roomService, "lua", "init", room_id, skynet.self(), room)
+            skynet.send(roomService, "lua", "init", room_id, json.encode(roomPlayers))
         end
     end
     -- end
@@ -102,7 +97,7 @@ local function room_cleanup_loop()
                             skynet.error(string.format(
                                 "Player %d (%s) has no valid connection, removing from players table", player.player_id,
                                 player.name))
-                            players[player.id] = nil
+                            players[player.player_id] = nil
                         end
                     end
                 end
@@ -145,9 +140,9 @@ function s.resp.start()
     return true -- Return value for skynet.call
 end
 
-function s.resp.add_player_to_queue(player_id, name, fd)
+function s.resp.add_player_to_queue(source, player_id, name, fd)
     skynet.error("[match_loop] add_player_to_queue() id = " .. player_id .. ", name = " .. name .. ", fd = " .. fd)
-    local player = game.new_player(player_id, name, fd)
+    local player = game.new_match_player(player_id, name, fd)
     game.match_queue_enqueue(match_queue, player)
 end
 
