@@ -3,9 +3,10 @@
 -- Equivalent to Room.GameLoopAsync in server-cs
 local skynet = require "skynet"
 local json = require "cjson"
-local protocol = require "snake.protocol"
 local game = require "snake.game"
 local s = require "service"
+local message = require "pomelo_message"
+local package = require "pomelo_package"
 
 -- Configuration
 local WIDTH = 32
@@ -15,9 +16,47 @@ local TICK_MS = 160
 ---@type Room
 local room = nil
 
+---@param room Room
+local function broadcast_state(room, state)
+    -- Encode state as JSON
+    local room_id = room.room_id
+    local state_json = json.encode(state)
+
+    -- Debug: log state JSON (first 200 chars)
+    local preview = string.sub(state_json, 1, 200)
+    skynet.error(string.format("[match_loop] Broadcasting state JSON (preview): %s...", preview))
+
+    -- Create push message
+    local push_msg = message.encode(0, message.TYPE_PUSH, false, "snake.state", state_json)
+    local data_pkg = package.encode(package.TYPE_DATA, push_msg)
+
+    skynet.error(string.format("[match_loop] Created data package: size=%d bytes", #data_pkg))
+
+    -- Find all players in this room from players table
+    local failed = {}
+    local sent_count = 0
+    for _, player in pairs(room.players) do
+        local player_id = player.player_id
+        if player.room_id == room_id then
+            if player.fd and player.gate_service then
+                skynet.error(string.format("[match_loop] Sending to player %d: gate=%s, fd=%d (type: %s)", player_id,
+                    tostring(player.gate_service), player.fd, type(player.fd)))
+                -- Debug: check player object
+                skynet.error(string.format("[match_loop] Player %d object: id=%s, fd=%s, gate=%s", player_id,
+                    tostring(player.id), tostring(player.fd), tostring(player.gate_service)))
+                skynet.send(player.gate_service, "lua", "send", player.fd, data_pkg)
+                sent_count = sent_count + 1
+            else
+                table.insert(failed, player_id)
+            end
+        end
+    end
+    skynet.error(string.format("[match_loop] Broadcast state to room %d: sent to %d players, failed: %d", room_id,
+        sent_count, #failed))
+end
+
 -- Game loop: advance world and broadcast state (equivalent to Room.GameLoopAsync in server-cs)
 local function game_loop()
-    local matchLoopService = skynet.uniqueservice("match_loop")
     while true do
         if not room then
             break
@@ -51,14 +90,9 @@ local function game_loop()
             skynet.error(string.format("Room %d: Player %d (%s) wins with score %d!", room.room_id, winner.id,
                 winner.name, winner.score))
             room.status = game.ROOM_STATUS.WAITING
-            -- Notify match_loop that game ended
-            skynet.send(matchLoopService, "lua", "room_game_ended", room.room_id)
-            -- If all players dead, game over
         elseif alive_count == 0 then
             skynet.error(string.format("Room %d: All players dead, game over.", room.room_id))
             room.status = game.ROOM_STATUS.WAITING
-            -- Notify match_loop that game ended
-            skynet.send(matchLoopService, "lua", "room_game_ended", room.room_id)
         end
 
         -- Get current state
@@ -77,8 +111,7 @@ local function game_loop()
         skynet.error(string.format("Room %d: Broadcasting state - alive players: %d, state players count: %d",
             room.room_id, alive_count, #state.players))
 
-        -- Broadcast state (delegate to match_loop for player socket access)
-        skynet.send(matchLoopService, "lua", "broadcast_state", room.room_id, state)
+        broadcast_state(room, state)
 
         -- Check room status again
         if room.status ~= game.ROOM_STATUS.PLAYING then
@@ -92,14 +125,9 @@ end
 ---@param players string
 function s.resp.init(source, room_id, players)
     skynet.error("[room] init() room_id = " .. room_id .. ", room = " .. players)
+    ---@type MatchPlayer[]
     local matchPlayers = json.decode(players)
     room = game.new_room(room_id, WIDTH, HEIGHT, TICK_MS)
-
-    -- Register room service with match_loop (it will send room config via _init_room)
-    -- skynet.send(matchLoopService, "lua", "register_room_service", room_id_param, skynet.self())
-
-    -- Wait a bit for room config to be set
-    -- skynet.sleep(1) -- 100ms
 
     if not room then
         skynet.error(string.format("Room service %d failed to get room config", skynet.self()))
@@ -107,7 +135,7 @@ function s.resp.init(source, room_id, players)
     end
 
     for i, mp in ipairs(matchPlayers) do
-        local player = game.new_player(mp.player_id, mp.name, mp.fd)
+        local player = game.new_player(mp.address, mp.player_id, mp.name, mp.fd)
         if game.room_add_player(room, player) then
             skynet.error(string.format("Player %d (%s) joined room %d", player.player_id, player.name, room_id))
         else

@@ -24,6 +24,7 @@ handlers[moveHandler.route] = moveHandler.handler
 ---@field handler ProtocolHandler
 ---@field sendCallback function
 ---@field reqId number 记录总共收到多少次请求
+---@field roomId number 战斗房间ID
 local session = {}
 
 -- Store fd per session service instance
@@ -38,8 +39,6 @@ local function process(fd)
     session.reqId = 0
     local player_id = fd -- Use fd as player_id (match_loop uses fd as player_id)
     local player_name = "User_" .. skynet.getenv("node") .. "_" .. player_id
-
-    local game_loop_service = skynet.uniqueservice("match_loop")
 
     local handler = protocol.createHandler({
         session = session,
@@ -66,6 +65,7 @@ local function process(fd)
         handshakeAckHandler = function(session_param)
             -- Add player to match queue after handshake ack
             skynet.error(string.format("[session] handshakeAckHandler called, player_id=%s", tostring(player_id)))
+            local game_loop_service = skynet.uniqueservice("match_loop")
             skynet.send(game_loop_service, "lua", "add_player_to_queue", player_id, player_name, fd)
         end,
         routeHandler = function(route, body)
@@ -171,6 +171,16 @@ function s.resp.send(source, fd_param, data)
     else
         skynet.error(string.format("[session] send failed: fd mismatch (session_fd=%s, param=%s)", tostring(session_fd),
             tostring(fd_param)))
+    end
+end
+
+function s.resp.onEnterRoom(source, room_id)
+    session.roomId = room_id
+end
+
+function s.resp.onLeaveRoom(source, room_id)
+    if session.roomId == room_id then
+        session.roomId = nil
     end
 end
 

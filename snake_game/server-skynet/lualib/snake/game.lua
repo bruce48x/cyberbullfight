@@ -38,13 +38,16 @@ end
 ---@field player_id string
 ---@field name string
 ---@field fd number
+---@field address number
 
+---@param addr number
 ---@param id string
 ---@param name string
 ---@param fd number
 ---@return MatchPlayer
-function M.new_match_player(id, name, fd)
+function M.new_match_player(addr, id, name, fd)
     return {
+        address = addr,
         player_id = id,
         name = name or ("Player" .. id),
         fd = fd,
@@ -52,6 +55,7 @@ function M.new_match_player(id, name, fd)
 end
 
 ---@class Player
+---@field address number
 ---@field player_id string
 ---@field name string
 ---@field fd number
@@ -64,12 +68,14 @@ end
 ---@field room_id any
 local Player = {}
 
+---@param addr number
 ---@param id string
 ---@param name string
 ---@param fd number
 ---@return Player
-function M.new_player(id, name, fd)
+function M.new_player(addr, id, name, fd)
     return {
+        address = addr,
         player_id = id,
         name = name or ("Player" .. id),
         fd = fd,

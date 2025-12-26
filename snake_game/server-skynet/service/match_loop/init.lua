@@ -2,9 +2,10 @@
 -- Handles game logic: matching, rooms, game loop
 local skynet = require "skynet"
 local json = require "cjson"
-local protocol = require "snake.protocol"
 local game = require "snake.game"
 local s = require "service"
+local package = require "pomelo_package"
+local message = require "pomelo_message"
 
 -- Configuration
 local WIDTH = 32
@@ -141,8 +142,9 @@ function s.resp.start()
 end
 
 function s.resp.add_player_to_queue(source, player_id, name, fd)
-    skynet.error("[match_loop] add_player_to_queue() id = " .. player_id .. ", name = " .. name .. ", fd = " .. fd)
-    local player = game.new_match_player(player_id, name, fd)
+    skynet.error("[match_loop] add_player_to_queue() source = " .. source .. ", id = " .. player_id .. ", name = " ..
+                     name .. ", fd = " .. fd)
+    local player = game.new_match_player(source, player_id, name, fd)
     game.match_queue_enqueue(match_queue, player)
 end
 
@@ -179,74 +181,4 @@ function s.resp.handle_player_move(player_id, dir)
     end
 end
 
-function s.resp.get_room(room_id)
-    -- Return nil to avoid serialization issues with deep nested tables
-    -- Room service should use command interface instead
-    return nil
-end
-
--- Notify that room game ended (called by room service)
-function s.resp.room_game_ended(room_id_param)
-    local room = rooms[room_id_param]
-    if room then
-        room.status = game.ROOM_STATUS.WAITING
-    end
-end
-
-function s.resp.broadcast_state(room_id, state)
-    -- Encode state as JSON
-    local state_json = json.encode(state)
-    local state_bytes = state_json
-
-    -- Debug: log state JSON (first 200 chars)
-    local preview = string.sub(state_json, 1, 200)
-    skynet.error(string.format("[match_loop] Broadcasting state JSON (preview): %s...", preview))
-
-    -- Create push message
-    local push_msg = protocol.encode_message(0, protocol.MESSAGE_TYPE.PUSH, false, "snake.state", state_bytes)
-    local data_pkg = protocol.encode_package(protocol.PACKAGE_TYPE.DATA, push_msg)
-
-    skynet.error(string.format("[match_loop] Created data package: size=%d bytes", #data_pkg))
-
-    -- Find all players in this room from players table
-    local failed = {}
-    local sent_count = 0
-    for player_id, player in pairs(players) do
-        if player.room_id == room_id then
-            if player.fd and player.gate_service then
-                skynet.error(string.format("[match_loop] Sending to player %d: gate=%s, fd=%d (type: %s)", player_id,
-                    tostring(player.gate_service), player.fd, type(player.fd)))
-                -- Debug: check player object
-                skynet.error(string.format("[match_loop] Player %d object: id=%s, fd=%s, gate=%s", player_id,
-                    tostring(player.id), tostring(player.fd), tostring(player.gate_service)))
-                skynet.send(player.gate_service, "lua", "send", player.fd, data_pkg)
-                sent_count = sent_count + 1
-            else
-                table.insert(failed, player_id)
-            end
-        end
-    end
-    skynet.error(string.format("[match_loop] Broadcast state to room %d: sent to %d players, failed: %d", room_id,
-        sent_count, #failed))
-
-    -- Remove failed players (notify room service to remove them)
-    local room = rooms[room_id]
-    if #failed > 0 and room and room.room_service then
-        for _, player_id in ipairs(failed) do
-            -- Room service will handle player removal
-            skynet.send(room.room_service, "lua", "remove_player", player_id)
-        end
-    end
-end
-
--- skynet.start(function()
---     skynet.dispatch("lua", function(session, source, cmd, ...)
---         local f = assert(CMD[cmd], cmd)
---         local result = f(...)
---         -- Only return response if there's a session (called via skynet.call)
---         if session ~= 0 then
---             skynet.ret(skynet.pack(result))
---         end
---     end)
--- end)
 s.start(...)
