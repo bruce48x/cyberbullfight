@@ -18,21 +18,21 @@ local function traceback(err)
     skynet.error(debug.traceback())
 end
 
-function M.call(node, srv, ...)
+function M.call(node, addr, ...)
     local mynode = skynet.getenv("node")
     if mynode == node then
-        return skynet.call(srv, "lua", ...)
+        return skynet.call(addr, "lua", ...)
     else
-        return cluster.call(node, srv, "lua", ...)
+        return cluster.call(node, addr, "lua", ...)
     end
 end
 
-function M.send(node, srv, ...)
+function M.send(node, addr, ...)
     local mynode = skynet.getenv("node")
     if mynode == node then
-        return skynet.send(srv, "lua", ...)
+        return skynet.send(addr, "lua", ...)
     else
-        return cluster.send(node, srv, "lua", ...)
+        return cluster.send(node, addr, "lua", ...)
     end
 end
 

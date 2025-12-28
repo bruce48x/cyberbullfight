@@ -26,4 +26,13 @@ function s.init()
     return true -- Return value for skynet.call
 end
 
+function s.resp.send(source, fd, msg)
+    local sess = sessions[fd]
+    if sess == nil then
+        return
+    end
+
+    socket.write(fd, msg)
+end
+
 s.start(...)

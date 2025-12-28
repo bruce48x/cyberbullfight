@@ -35,18 +35,21 @@ function M.pos_equals(a, b)
 end
 
 ---@class MatchPlayer
+---@field node string
 ---@field player_id string
 ---@field name string
 ---@field fd number
 ---@field address number
 
+---@param node string
 ---@param addr number
 ---@param id string
 ---@param name string
 ---@param fd number
 ---@return MatchPlayer
-function M.new_match_player(addr, id, name, fd)
+function M.new_match_player(node, addr, id, name, fd)
     return {
+        node = node,
         address = addr,
         player_id = id,
         name = name or ("Player" .. id),
@@ -55,6 +58,7 @@ function M.new_match_player(addr, id, name, fd)
 end
 
 ---@class Player
+---@field node string
 ---@field address number
 ---@field player_id string
 ---@field name string
@@ -66,15 +70,16 @@ end
 ---@field segments table
 ---@field status string
 ---@field room_id any
-local Player = {}
 
+---@param node string
 ---@param addr number
 ---@param id string
 ---@param name string
 ---@param fd number
 ---@return Player
-function M.new_player(addr, id, name, fd)
+function M.new_player(node, addr, id, name, fd)
     return {
+        node = node,
         address = addr,
         player_id = id,
         name = name or ("Player" .. id),

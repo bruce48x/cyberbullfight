@@ -66,7 +66,7 @@ local function process(fd)
             -- Add player to match queue after handshake ack
             skynet.error(string.format("[session] handshakeAckHandler called, player_id=%s", tostring(player_id)))
             local game_loop_service = skynet.uniqueservice("match_loop")
-            skynet.send(game_loop_service, "lua", "add_player_to_queue", player_id, player_name, fd)
+            skynet.send(game_loop_service, "lua", "add_player_to_queue", skynet.getenv("node"), player_id, player_name, fd)
         end,
         routeHandler = function(route, body)
             local handler = handlers[route]

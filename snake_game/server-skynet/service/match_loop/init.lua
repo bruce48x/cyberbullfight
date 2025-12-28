@@ -141,10 +141,10 @@ function s.resp.start()
     return true -- Return value for skynet.call
 end
 
-function s.resp.add_player_to_queue(source, player_id, name, fd)
+function s.resp.add_player_to_queue(source, node, player_id, name, fd)
     skynet.error("[match_loop] add_player_to_queue() source = " .. source .. ", id = " .. player_id .. ", name = " ..
                      name .. ", fd = " .. fd)
-    local player = game.new_match_player(source, player_id, name, fd)
+    local player = game.new_match_player(node, source, player_id, name, fd)
     game.match_queue_enqueue(match_queue, player)
 end
 

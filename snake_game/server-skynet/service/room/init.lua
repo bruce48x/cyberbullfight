@@ -17,42 +17,20 @@ local TICK_MS = 160
 local room = nil
 
 ---@param room Room
-local function broadcast_state(room, state)
+local function broadcast_state(state)
     -- Encode state as JSON
-    local room_id = room.room_id
+    if room == nil then
+        return
+    end
+
     local state_json = json.encode(state)
-
-    -- Debug: log state JSON (first 200 chars)
-    local preview = string.sub(state_json, 1, 200)
-    skynet.error(string.format("[match_loop] Broadcasting state JSON (preview): %s...", preview))
-
     -- Create push message
     local push_msg = message.encode(0, message.TYPE_PUSH, false, "snake.state", state_json)
     local data_pkg = package.encode(package.TYPE_DATA, push_msg)
 
-    skynet.error(string.format("[match_loop] Created data package: size=%d bytes", #data_pkg))
-
-    -- Find all players in this room from players table
-    local failed = {}
-    local sent_count = 0
     for _, player in pairs(room.players) do
-        local player_id = player.player_id
-        if player.room_id == room_id then
-            if player.fd and player.gate_service then
-                skynet.error(string.format("[match_loop] Sending to player %d: gate=%s, fd=%d (type: %s)", player_id,
-                    tostring(player.gate_service), player.fd, type(player.fd)))
-                -- Debug: check player object
-                skynet.error(string.format("[match_loop] Player %d object: id=%s, fd=%s, gate=%s", player_id,
-                    tostring(player.id), tostring(player.fd), tostring(player.gate_service)))
-                skynet.send(player.gate_service, "lua", "send", player.fd, data_pkg)
-                sent_count = sent_count + 1
-            else
-                table.insert(failed, player_id)
-            end
-        end
+        s.send(player.node, player.address, "lua", "send", player.fd, data_pkg)
     end
-    skynet.error(string.format("[match_loop] Broadcast state to room %d: sent to %d players, failed: %d", room_id,
-        sent_count, #failed))
 end
 
 -- Game loop: advance world and broadcast state (equivalent to Room.GameLoopAsync in server-cs)
@@ -88,7 +66,7 @@ local function game_loop()
         if alive_count == 1 then
             local winner = alive_players[1]
             skynet.error(string.format("Room %d: Player %d (%s) wins with score %d!", room.room_id, winner.id,
-                winner.name, winner.score))
+                winner.name, (winner.score or 0)))
             room.status = game.ROOM_STATUS.WAITING
         elseif alive_count == 0 then
             skynet.error(string.format("Room %d: All players dead, game over.", room.room_id))
@@ -111,7 +89,7 @@ local function game_loop()
         skynet.error(string.format("Room %d: Broadcasting state - alive players: %d, state players count: %d",
             room.room_id, alive_count, #state.players))
 
-        broadcast_state(room, state)
+        broadcast_state(state)
 
         -- Check room status again
         if room.status ~= game.ROOM_STATUS.PLAYING then
@@ -135,7 +113,7 @@ function s.resp.init(source, room_id, players)
     end
 
     for i, mp in ipairs(matchPlayers) do
-        local player = game.new_player(mp.address, mp.player_id, mp.name, mp.fd)
+        local player = game.new_player(mp.node, mp.address, mp.player_id, mp.name, mp.fd)
         if game.room_add_player(room, player) then
             skynet.error(string.format("Player %d (%s) joined room %d", player.player_id, player.name, room_id))
         else
