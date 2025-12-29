@@ -34,6 +34,18 @@ function M.pos_equals(a, b)
     return a.x == b.x and a.y == b.y
 end
 
+---@class Session
+---@field fd number
+---@field connState ConnectionState
+---@field lastHeartbeatTime number 上次心跳时间
+---@field heartbeatTimerSeq number 心跳定时器序列
+---@field heartbeatInterval number 心跳间隔
+---@field heartbeatTimeout number 心跳超时时间，单位：秒
+---@field handler ProtocolHandler
+---@field sendCallback function
+---@field reqId number 记录总共收到多少次请求
+---@field roomId number 战斗房间ID
+
 ---@class MatchPlayer
 ---@field node string
 ---@field player_id string

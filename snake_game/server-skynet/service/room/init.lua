@@ -29,7 +29,7 @@ local function broadcast_state(state)
     local data_pkg = package.encode(package.TYPE_DATA, push_msg)
 
     for _, player in pairs(room.players) do
-        s.send(player.node, player.address, "lua", "send", player.fd, data_pkg)
+        s.send(player.node, player.address, "lua", "push_to_client", player.fd, data_pkg)
     end
 end
 
@@ -54,6 +54,7 @@ local function game_loop()
 
         -- Check game end conditions after advancing world
         local alive_count = 0
+        ---@type Player[]
         local alive_players = {}
         for _, player in pairs(room.players) do
             if player.alive then
@@ -65,7 +66,7 @@ local function game_loop()
         -- If only one player alive, that player wins
         if alive_count == 1 then
             local winner = alive_players[1]
-            skynet.error(string.format("Room %d: Player %d (%s) wins with score %d!", room.room_id, winner.id,
+            skynet.error(string.format("Room %d: Player %s (%s) wins with score %d!", room.room_id, winner.player_id,
                 winner.name, (winner.score or 0)))
             room.status = game.ROOM_STATUS.WAITING
         elseif alive_count == 0 then
@@ -115,9 +116,9 @@ function s.resp.init(source, room_id, players)
     for i, mp in ipairs(matchPlayers) do
         local player = game.new_player(mp.node, mp.address, mp.player_id, mp.name, mp.fd)
         if game.room_add_player(room, player) then
-            skynet.error(string.format("Player %d (%s) joined room %d", player.player_id, player.name, room_id))
+            skynet.error(string.format("Player %s (%s) joined room %d", player.player_id, player.name, room_id))
         else
-            skynet.error(string.format("Failed to add player %d to room %d", player.player_id, room_id))
+            skynet.error(string.format("Failed to add player %s to room %d", player.player_id, room_id))
         end
     end
 
