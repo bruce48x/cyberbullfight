@@ -1,4 +1,5 @@
 local skynet = require "skynet"
+local cluster = require "skynet.cluster"
 local json = require "cjson"
 local game = require "snake.game"
 
@@ -24,7 +25,7 @@ local H = {
                 end
                 
                 if dir then
-                    skynet.send(matchLoopService, "lua", "handle_player_move", sess.player_id, dir)
+                    cluster.send(sess.roomNode, sess.roomService, "lua", "handle_player_move", sess.player_id, dir)
                 end
             end
         end

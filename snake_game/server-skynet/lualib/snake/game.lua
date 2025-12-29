@@ -45,6 +45,8 @@ end
 ---@field sendCallback function
 ---@field reqId number 记录总共收到多少次请求
 ---@field roomId number 战斗房间ID
+---@field roomNode string 战斗房间节点
+---@field roomService number 战斗房间服务地址
 
 ---@class MatchPlayer
 ---@field node string
@@ -65,7 +67,7 @@ function M.new_match_player(node, addr, id, name, fd)
         address = addr,
         player_id = id,
         name = name or ("Player" .. id),
-        fd = fd,
+        fd = fd
     }
 end
 
@@ -117,7 +119,7 @@ function M.player_to_view(player)
         node = node.next
     end
     return {
-        id = player.id,
+        id = player.player_id,
         name = player.name,
         alive = player.alive,
         score = player.score,
@@ -216,7 +218,7 @@ end
 
 function M.match_queue_remove(mq, player)
     for i, p in ipairs(mq.queue) do
-        if p.id == player.id then
+        if p.player_id == player.player_id then
             table.remove(mq.queue, i)
             return
         end
@@ -231,6 +233,7 @@ end
 ---@field status string
 ---@field players Player[]
 ---@field foods any[]
+---@field room_service integer|nil  Room service address (set by match_loop)
 
 ---@param room_id integer
 ---@param width integer
@@ -315,6 +318,7 @@ function M.room_can_close(room)
 end
 
 function M.room_handle_player_move(room, player_id, dir)
+    skynet.error(string.format("Room handle player move: %s, %s", player_id, dir))
     local player = room.players[player_id]
     if not player then
         return

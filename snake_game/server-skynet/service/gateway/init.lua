@@ -32,6 +32,9 @@ local function recv_loop(fd)
     local player_id = mynode .. "_" .. fd
     local player_name = "User_" .. player_id
 
+    -- Store player_id in session for later use (e.g., disconnect handling)
+    session.player_id = player_id
+
     local handler = protocol.createHandler({
         session = session,
         sendCallback = function(data)
@@ -81,6 +84,12 @@ local function recv_loop(fd)
         end,
         closeCallback = function()
             skynet.error("[main] Connection closed: fd=" .. fd)
+            -- Notify match_loop to remove player (like server-cs HandleClient finally block)
+            if session.player_id then
+                local game_loop_service = skynet.uniqueservice("match_loop")
+                skynet.send(game_loop_service, "lua", "remove_player", session.player_id)
+            end
+            sessionMap[fd] = nil
             socket.close(fd)
         end
     })
@@ -95,7 +104,13 @@ local function recv_loop(fd)
                 handler:feed(remain)
             end
             skynet.error("[main] Socket read false, closing connection: fd=" .. fd)
+            -- Notify match_loop to remove player before closing
+            if session.player_id then
+                local game_loop_service = skynet.uniqueservice("match_loop")
+                skynet.send(game_loop_service, "lua", "remove_player", session.player_id)
+            end
             handler:close()
+            sessionMap[fd] = nil
             break
         elseif type(readdata) == "string" then
             -- Only process string data
@@ -105,19 +120,37 @@ local function recv_loop(fd)
                 if result == -1 then
                     -- Invalid data, close connection
                     skynet.error("[main] Invalid protocol data, closing connection: fd=" .. fd)
+                    -- Notify match_loop to remove player before closing
+                    if session.player_id then
+                        local game_loop_service = skynet.uniqueservice("match_loop")
+                        skynet.send(game_loop_service, "lua", "remove_player", session.player_id)
+                    end
                     handler:close()
+                    sessionMap[fd] = nil
                     break
                 end
             end
         elseif readdata == nil then
             -- nil means no data and connection closed
             skynet.error("[main] Socket read nil, closing connection: fd=" .. fd)
+            -- Notify match_loop to remove player before closing
+            if session.player_id then
+                local game_loop_service = skynet.uniqueservice("match_loop")
+                skynet.send(game_loop_service, "lua", "remove_player", session.player_id)
+            end
             handler:close()
+            sessionMap[fd] = nil
             break
         else
             -- Unexpected type
             skynet.error("[main] Socket read unexpected type: " .. type(readdata) .. ", value: " .. tostring(readdata))
+            -- Notify match_loop to remove player before closing
+            if session.player_id then
+                local game_loop_service = skynet.uniqueservice("match_loop")
+                skynet.send(game_loop_service, "lua", "remove_player", session.player_id)
+            end
             handler:close()
+            sessionMap[fd] = nil
             break
         end
     end
@@ -137,6 +170,30 @@ function s.init()
     end)
 
     return true -- Return value for skynet.call
+end
+
+function s.resp.on_join_room(source, fd, roomNode, roomId)
+    skynet.error(string.format("[session] on_join_room called, source=%s, fd=%s, roomNode=%s, roomId=%s", source, fd,
+        roomNode, roomId))
+    local sess = sessionMap[fd]
+    if sess == nil then
+        return
+    end
+
+    sess.roomNode = roomNode
+    sess.roomService = source
+    sess.roomId = roomId
+end
+
+function s.resp.on_leave_room(source, fd)
+    local sess = sessionMap[fd]
+    if sess == nil then
+        return
+    end
+
+    sess.roomNode = nil
+    sess.roomService = nil
+    sess.roomId = nil
 end
 
 function s.resp.push_to_client(source, fd, msg)

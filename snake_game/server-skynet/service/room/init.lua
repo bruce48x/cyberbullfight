@@ -8,6 +8,8 @@ local s = require "service"
 local message = require "pomelo_message"
 local package = require "pomelo_package"
 
+local mynode = skynet.getenv("node")
+
 -- Configuration
 local WIDTH = 32
 local HEIGHT = 18
@@ -116,22 +118,31 @@ function s.resp.init(source, room_id, players)
     for i, mp in ipairs(matchPlayers) do
         local player = game.new_player(mp.node, mp.address, mp.player_id, mp.name, mp.fd)
         if game.room_add_player(room, player) then
-            skynet.error(string.format("Player %s (%s) joined room %d", player.player_id, player.name, room_id))
+            skynet.error(string.format("Player from node:%s, addr:%d, id:%s (name:%s) joined room %d", player.node,
+                player.address, player.player_id, player.name, room_id))
+            s.send(player.node, player.address, "on_join_room", player.fd, mynode, room_id)
         else
             skynet.error(string.format("Failed to add player %s to room %d", player.player_id, room_id))
         end
     end
 
-    -- Start game loop in a separate coroutine
+    -- Start game (like server-cs Room.StartGameAsync)
     room.status = game.ROOM_STATUS.PLAYING
     game.room_ensure_food(room)
+
+    -- Send initial state (like server-cs StartGameAsync broadcasts initial state)
+    local initialState = game.room_get_current_state(room)
+    if initialState then
+        broadcast_state(initialState)
+    end
+
+    -- Start game loop in a separate coroutine
     skynet.fork(game_loop)
 
     skynet.error(string.format("Room service %d started for room %d", skynet.self(), room.room_id))
 end
 
--- Handle player move (delegated from match_loop)
-function s.resp.handle_player_move(player_id, dir)
+function s.resp.handle_player_move(source, player_id, dir)
     if room then
         game.room_handle_player_move(room, player_id, dir)
     end
@@ -142,6 +153,26 @@ function s.resp.remove_player(player_id)
     if room then
         game.room_remove_player(room, player_id)
     end
+end
+
+-- Get room status and player count (for match_loop to check if room can close)
+function s.resp.get_status()
+    if room then
+        local player_ids = game.room_get_player_ids(room)
+        return {
+            status = room.status,
+            player_count = player_ids and #player_ids or 0
+        }
+    end
+    return nil
+end
+
+-- Get player IDs in this room (like server-cs Room.GetPlayerIds)
+function s.resp.get_player_ids()
+    if room then
+        return game.room_get_player_ids(room)
+    end
+    return {}
 end
 
 s.start(...)
