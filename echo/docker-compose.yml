@@ -1,0 +1,22 @@
+services:
+  server:
+    image: bruce48li/cyberbullfight-server-cpp
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "3010:3010"
+    networks:
+      - cyberbullfight-network
+  client:
+    image: bruce48li/cyberbullfight-client-go
+    environment:
+      - TZ=Asia/Shanghai
+      - SERVER_HOST=server
+    depends_on:
+      - server
+    networks:
+      - cyberbullfight-network
+
+networks:
+  cyberbullfight-network:
+    driver: bridge

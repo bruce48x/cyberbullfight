@@ -1,0 +1,12 @@
+[submodule "echo/server-skynet/skynet"]
+	path = echo/server-skynet/skynet
+	url = https://github.com/cloudwu/skynet.git
+[submodule "echo/server-skynet/3rd/cjson"]
+	path = echo/server-skynet/3rd/cjson
+	url = https://github.com/cloudwu/lua-cjson.git
+[submodule "snake_game/server-skynet/skynet"]
+	path = snake_game/server-skynet/skynet
+	url = https://github.com/cloudwu/skynet.git
+[submodule "snake_game/server-skynet/3rd/cjson"]
+	path = snake_game/server-skynet/3rd/cjson
+	url = https://github.com/cloudwu/lua-cjson.git

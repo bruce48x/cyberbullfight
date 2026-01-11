@@ -1,0 +1,29 @@
+node_modules
+logs
+*.tsbuildinfo
+*.so
+luaclib/*
+!luaclib/.gitkeep
+echo/client-go/client-go
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
+
+# IDE
+.idea/
+
+# cpp
+**/build/
+cmake-build-debug-wsl
+.cache
+
+# .NET
+bin/
+obj/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform

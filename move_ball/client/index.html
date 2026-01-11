@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Simple WebGL Game</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: black;
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: #111;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="glcanvas" width="600" height="400"></canvas>
+
+    <script>
+        const canvas = document.getElementById("glcanvas");
+        const gl = canvas.getContext("webgl");
+
+        // --- 顶点着色器 (控制点的位置) ---
+        const vsSource = `
+  attribute vec2 aPosition;
+  uniform vec2 uTranslate;
+  void main() {
+    gl_PointSize = 10.0;
+    gl_Position = vec4(aPosition + uTranslate, 0.0, 1.0);
+  }
+`;
+
+        // --- 片元着色器 (控制颜色) ---
+        const fsSource = `
+  void main() {
+    gl_FragColor = vec4(0.2, 0.8, 1.0, 1.0);
+  }
+`;
+
+        // --- 编译着色器 ---
+        function createShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+                throw new Error(gl.getShaderInfoLog(shader));
+            return shader;
+        }
+
+        const vs = createShader(gl.VERTEX_SHADER, vsSource);
+        const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
+
+        // --- 创建程序 ---
+        const program = gl.createProgram();
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        // --- 传入一个点的顶点坐标 ---
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0.0, 0.0]), gl.STATIC_DRAW);
+
+        const aPosition = gl.getAttribLocation(program, "aPosition");
+        gl.enableVertexAttribArray(aPosition);
+        gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+
+        const uTranslate = gl.getUniformLocation(program, "uTranslate");
+
+        // --- 玩家位置 ---
+        let player = { x: 0, y: 0 };
+        let keys = {};
+
+        // --- 键盘输入 ---
+        window.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+        // --- 游戏循环 ---
+        function loop() {
+            // 控制速度
+            const speed = 0.02;
+            if (keys['w']) player.y += speed;
+            if (keys['s']) player.y -= speed;
+            if (keys['a']) player.x -= speed;
+            if (keys['d']) player.x += speed;
+
+            // 限制范围
+            player.x = Math.max(-1, Math.min(1, player.x));
+            player.y = Math.max(-1, Math.min(1, player.y));
+
+            // 清屏并绘制点
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.uniform2f(uTranslate, player.x, player.y);
+            gl.drawArrays(gl.POINTS, 0, 1);
+
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+
+</html>

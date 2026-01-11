@@ -1,0 +1,27 @@
+{
+  "name": "cyberbullfight",
+  "version": "0.0.1",
+  "private": false,
+  "dependencies": {
+    "pinusmod-logger": "^1.8.4",
+    "pinusmod-protobuf": "^1.8.4",
+    "pinusmod-protocol": "^1.8.0"
+  },
+  "devDependencies": {
+    "@types/cliff": "~0.1.4",
+    "@types/node": "^20.10.0",
+    "@types/request": "2.48.12",
+    "@typescript-eslint/eslint-plugin": "^8.0",
+    "@typescript-eslint/parser": "^8.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.0",
+    "typescript": "~5.1.2"
+  },
+  "scripts": {
+    "build": "rimraf dist/ && yarn format && yarn lint && yarn buildcode",
+    "buildw": "tsc -w",
+    "format": "prettier --write \"**/*.ts\"",
+    "lint": "eslint \"**/*.ts\" --fix",
+    "buildcode": "tsc"
+  }
+}

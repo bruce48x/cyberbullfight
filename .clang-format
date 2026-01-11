@@ -1,0 +1,6 @@
+# .clang-format
+BasedOnStyle: LLVM
+IndentWidth: 4
+UseTab: Never
+# 可选：禁止 clangd 自动 fallback 到内置风格
+# （如果 .clang-format 语法错误或缺失，它可能回退到 Google 风格 → 2 空格！）
