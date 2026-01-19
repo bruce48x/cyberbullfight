@@ -10,3 +10,6 @@
 [submodule "snake_game/server-skynet/3rd/cjson"]
 	path = snake_game/server-skynet/3rd/cjson
 	url = https://github.com/cloudwu/lua-cjson.git
+[submodule "echo/server-sunnet/3rd/json"]
+	path = echo/server-sunnet/3rd/json
+	url = https://github.com/nlohmann/json.git
