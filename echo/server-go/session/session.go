@@ -140,6 +140,9 @@ func (s *Session) handleHandshakeAck() {
 	s.lastHeartbeat = time.Now()
 	s.mu.Unlock()
 
+	// Notify session manager of successful handshake
+	GetManager().OnHandshakeSuccess()
+
 	// Start heartbeat
 	go s.heartbeatLoop()
 }
@@ -245,6 +248,9 @@ func (s *Session) Close() {
 	}
 	s.state = StateClosed
 	s.mu.Unlock()
+
+	// Notify session manager of connection close
+	GetManager().OnConnectionClose()
 
 	close(s.closeChan)
 	s.conn.Close()
