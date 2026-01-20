@@ -14,6 +14,12 @@ public class SocketWorker
         Console.WriteLine("SocketWorker Init");
     }
 
+    public void Stop()
+    {
+        _running = false;
+        _eventSignal.Set(); // Wake up if waiting
+    }
+
     public void Run()
     {
         while (_running)
@@ -55,7 +61,7 @@ public class SocketWorker
             foreach (var socket in readList)
             {
                 int fd = socket.Handle.ToInt32();
-                var conn = Sunnet.Instance.GetConn(fd);
+                var conn = Starnet.Instance.GetConn(fd);
                 if (conn == null) continue;
 
                 if (conn.Type == ConnType.Listen)
@@ -71,7 +77,7 @@ public class SocketWorker
             foreach (var socket in writeList)
             {
                 int fd = socket.Handle.ToInt32();
-                var conn = Sunnet.Instance.GetConn(fd);
+                var conn = Starnet.Instance.GetConn(fd);
                 if (conn != null && conn.Type == ConnType.Client)
                 {
                     OnRW(conn, false, true);
@@ -87,7 +93,7 @@ public class SocketWorker
     public void AddEvent(int fd)
     {
         Console.WriteLine($"AddEvent fd {fd}");
-        var socket = Sunnet.Instance.GetSocket(fd);
+        var socket = Starnet.Instance.GetSocket(fd);
         if (socket != null)
         {
             _events[fd] = new SocketEvent { Fd = fd, Socket = socket };
@@ -110,7 +116,7 @@ public class SocketWorker
     private void OnAccept(Conn conn)
     {
         Console.WriteLine($"OnAccept fd: {conn.Fd}");
-        var listenSocket = Sunnet.Instance.GetSocket(conn.Fd);
+        var listenSocket = Starnet.Instance.GetSocket(conn.Fd);
         if (listenSocket == null) return;
 
         try
@@ -122,8 +128,8 @@ public class SocketWorker
             clientSocket.NoDelay = true;
 
             int clientFd = clientSocket.Handle.ToInt32();
-            Sunnet.Instance.AddConn(clientFd, conn.ServiceId, ConnType.Client);
-            Sunnet.Instance.RegisterSocket(clientFd, clientSocket);
+            Starnet.Instance.AddConn(clientFd, conn.ServiceId, ConnType.Client);
+            Starnet.Instance.RegisterSocket(clientFd, clientSocket);
             AddEvent(clientFd);
 
             var msg = new SocketAcceptMsg
@@ -132,7 +138,7 @@ public class SocketWorker
                 ListenFd = conn.Fd,
                 ClientFd = clientFd
             };
-            Sunnet.Instance.Send(conn.ServiceId, msg);
+            Starnet.Instance.Send(conn.ServiceId, msg);
         }
         catch (SocketException ex)
         {
@@ -152,7 +158,7 @@ public class SocketWorker
             IsRead = r,
             IsWrite = w
         };
-        Sunnet.Instance.Send(conn.ServiceId, msg);
+        Starnet.Instance.Send(conn.ServiceId, msg);
     }
 
     private class SocketEvent

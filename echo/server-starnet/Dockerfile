@@ -19,4 +19,4 @@ COPY --from=builder /app/out .
 EXPOSE 3010
 
 ENTRYPOINT ["dotnet"]
-CMD ["server-cs.dll"]
+CMD ["server-starnet.dll"]

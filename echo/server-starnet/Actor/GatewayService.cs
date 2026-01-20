@@ -73,7 +73,7 @@ public class GatewayService : Service
         {
             foreach (var pair in _sessions)
             {
-                Sunnet.Instance.CloseConn(pair.Key);
+                Starnet.Instance.CloseConn(pair.Key);
             }
             _sessions.Clear();
         }
@@ -105,7 +105,7 @@ public class GatewayService : Service
 
             try
             {
-                var socket = Sunnet.Instance.GetSocket(fd);
+                var socket = Starnet.Instance.GetSocket(fd);
                 if (socket == null) return;
 
                 do
@@ -125,7 +125,7 @@ public class GatewayService : Service
                     if (_sessions.ContainsKey(fd))
                     {
                         OnSocketClose(fd);
-                        Sunnet.Instance.CloseConn(fd);
+                        Starnet.Instance.CloseConn(fd);
                     }
                 }
             }
@@ -135,7 +135,7 @@ public class GatewayService : Service
                 if (_sessions.ContainsKey(fd))
                 {
                     OnSocketClose(fd);
-                    Sunnet.Instance.CloseConn(fd);
+                    Starnet.Instance.CloseConn(fd);
                 }
             }
         }
@@ -239,7 +239,7 @@ public class GatewayService : Service
                 break;
             case PackageType.Kick:
                 OnSocketClose(fd);
-                Sunnet.Instance.CloseConn(fd);
+                Starnet.Instance.CloseConn(fd);
                 break;
             default:
                 Console.WriteLine($"[GatewayService] Unknown package type: {pkg.Type}");
@@ -388,7 +388,7 @@ public class GatewayService : Service
     {
         try
         {
-            var socket = Sunnet.Instance.GetSocket(fd);
+            var socket = Starnet.Instance.GetSocket(fd);
             if (socket == null) return;
 
             int sent = 0;
@@ -401,7 +401,7 @@ public class GatewayService : Service
                     {
                         Console.WriteLine($"[GatewayService] Send returned 0, fd={fd}");
                         OnSocketClose(fd);
-                        Sunnet.Instance.CloseConn(fd);
+                        Starnet.Instance.CloseConn(fd);
                         return;
                     }
                     sent += n;
@@ -416,7 +416,7 @@ public class GatewayService : Service
                     }
                     Console.WriteLine($"[GatewayService] Send error: {ex.SocketErrorCode}, fd={fd}");
                     OnSocketClose(fd);
-                    Sunnet.Instance.CloseConn(fd);
+                    Starnet.Instance.CloseConn(fd);
                     return;
                 }
             }
@@ -430,13 +430,13 @@ public class GatewayService : Service
             }
             Console.WriteLine($"[GatewayService] Send error: {ex.Message}, fd={fd}");
             OnSocketClose(fd);
-            Sunnet.Instance.CloseConn(fd);
+            Starnet.Instance.CloseConn(fd);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[GatewayService] Send error: {ex.Message}, fd={fd}");
             OnSocketClose(fd);
-            Sunnet.Instance.CloseConn(fd);
+            Starnet.Instance.CloseConn(fd);
         }
     }
 
@@ -475,7 +475,7 @@ public class GatewayService : Service
         {
             Console.WriteLine($"[GatewayService] Heartbeat timeout fd={fd}");
             OnSocketClose(fd);
-            Sunnet.Instance.CloseConn(fd);
+            Starnet.Instance.CloseConn(fd);
         }
     }
 }

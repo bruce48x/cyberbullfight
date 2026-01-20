@@ -3,15 +3,15 @@ using System.Text.Json;
 
 const int Port = 3010;
 
-// Initialize Sunnet
-var sunnet = new Sunnet();
-sunnet.Start();
+// Initialize Starnet
+var starnet = new Starnet();
+starnet.Start();
 
 // Create gateway service
-uint gatewayId = sunnet.NewService("gateway");
+uint gatewayId = starnet.NewService("gateway");
 
 // Listen on port
-int listenFd = sunnet.Listen(Port, gatewayId);
+int listenFd = starnet.Listen(Port, gatewayId);
 if (listenFd < 0)
 {
     Console.WriteLine("[main] Failed to listen on port");
@@ -51,7 +51,9 @@ Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
     Console.WriteLine("[main] Shutting down server...");
-    sunnet.KillService(gatewayId);
+    starnet.KillService(gatewayId);
+    starnet.Stop();
 };
 
-sunnet.Wait();
+starnet.Wait();
+Console.WriteLine("[main] Server stopped");

@@ -4,9 +4,9 @@ using System.Net.Sockets;
 
 namespace ServerCs.Actor;
 
-public class Sunnet
+public class Starnet
 {
-    public static Sunnet Instance { get; private set; } = null!;
+    public static Starnet Instance { get; private set; } = null!;
 
     private readonly ConcurrentDictionary<uint, Service> _services = new();
     private uint _maxId = 0;
@@ -31,14 +31,16 @@ public class Sunnet
     private readonly ConcurrentDictionary<int, System.Net.Sockets.Socket> _sockets = new();
     private readonly object _connsLock = new();
 
-    public Sunnet()
+    private volatile bool _running = true;
+
+    public Starnet()
     {
         Instance = this;
     }
 
     public void Start()
     {
-        Console.WriteLine("hello Sunnet");
+        Console.WriteLine("hello Starnet");
 
         StartWorker();
         StartSocket();
@@ -65,12 +67,32 @@ public class Sunnet
         _socketThread.Start();
     }
 
+    public void Stop()
+    {
+        _running = false;
+        
+        // Stop socket worker
+        _socketWorker?.Stop();
+        
+        // Wake up all waiting workers
+        for (int i = 0; i < WORKER_NUM; i++)
+        {
+            _sleepEvent.Set();
+        }
+    }
+
+    public bool IsRunning => _running;
+
     public void Wait()
     {
-        if (_workerThreads.Count > 0)
+        // Wait for all worker threads
+        foreach (var thread in _workerThreads)
         {
-            _workerThreads[0].Join();
+            thread.Join();
         }
+        
+        // Wait for socket thread
+        _socketThread?.Join();
     }
 
     public uint NewService(string type)
@@ -183,6 +205,11 @@ public class Sunnet
 
     public void WorkerWait()
     {
+        if (!_running)
+        {
+            return;
+        }
+        
         lock (_sleepLock)
         {
             _sleepCount++;

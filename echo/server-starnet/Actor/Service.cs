@@ -129,7 +129,7 @@ public class Service
             {
                 try
                 {
-                    var socket = Sunnet.Instance.GetSocket(fd);
+                    var socket = Starnet.Instance.GetSocket(fd);
                     if (socket == null) break;
                     
                     len = socket.Receive(buff, 0, BUFFSIZE, System.Net.Sockets.SocketFlags.None);
@@ -143,10 +143,10 @@ public class Service
                     if (ex.SocketErrorCode != SocketError.WouldBlock &&
                         ex.SocketErrorCode != SocketError.TimedOut)
                     {
-                        if (Sunnet.Instance.GetConn(fd) != null)
+                        if (Starnet.Instance.GetConn(fd) != null)
                         {
                             OnSocketClose(fd);
-                            Sunnet.Instance.CloseConn(fd);
+                            Starnet.Instance.CloseConn(fd);
                         }
                     }
                     len = 0;
@@ -159,17 +159,17 @@ public class Service
 
             if (len <= 0)
             {
-                if (Sunnet.Instance.GetConn(fd) != null)
+                if (Starnet.Instance.GetConn(fd) != null)
                 {
                     OnSocketClose(fd);
-                    Sunnet.Instance.CloseConn(fd);
+                    Starnet.Instance.CloseConn(fd);
                 }
             }
         }
 
         if (msg.IsWrite)
         {
-            if (Sunnet.Instance.GetConn(fd) != null)
+            if (Starnet.Instance.GetConn(fd) != null)
             {
                 OnSocketWritable(fd);
             }

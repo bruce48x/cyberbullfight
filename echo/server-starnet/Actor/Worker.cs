@@ -13,12 +13,12 @@ public class Worker
 
     public void Run()
     {
-        while (true)
+        while (Starnet.Instance.IsRunning)
         {
-            var srv = Sunnet.Instance.PopGlobalQueue();
+            var srv = Starnet.Instance.PopGlobalQueue();
             if (srv == null)
             {
-                Sunnet.Instance.WorkerWait();
+                Starnet.Instance.WorkerWait();
             }
             else
             {
@@ -39,7 +39,7 @@ public class Worker
         {
             if (!srv.InGlobal)
             {
-                Sunnet.Instance.PushGlobalQueue(srv);
+                Starnet.Instance.PushGlobalQueue(srv);
                 srv.SetInGlobal(true);
             }
         }
