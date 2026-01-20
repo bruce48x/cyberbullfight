@@ -127,13 +127,18 @@ nohup ./benchmark.sh -n server-skynet \
 -d 70 > benchmark.log 2>&1 &
 
 # 服务端 ( c# )
-nohup ./benchmark.sh -n server-starnet \
--i bruce48li/cyberbullfight-server-starnet \
+nohup ./benchmark.sh -n server-cs \
+-i bruce48li/cyberbullfight-server-cs \
 -d 70 > benchmark.log 2>&1 &
 
 # 服务端 ( c++ )
 nohup ./benchmark.sh -n server-sunnet \
 -i bruce48li/cyberbullfight-server-sunnet \
+-d 70 > benchmark.log 2>&1 &
+
+# 服务端 ( c++ )
+nohup ./benchmark.sh -n server-cpp \
+-i bruce48li/cyberbullfight-server-cpp \
 -d 70 > benchmark.log 2>&1 &
 ```
 
