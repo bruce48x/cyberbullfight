@@ -13,6 +13,9 @@ int main()
     new Sunnet();
     Sunnet::inst->Start();
 
+    // Register GatewayService to service factory
+    GatewayService::register_service();
+
     // Register handler
     GatewayService::register_handler("connector.entryHandler.hello",
         [](Session& s, json body) {

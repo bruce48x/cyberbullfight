@@ -7,11 +7,28 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <signal.h>
-#include "../../include/GatewayService.h"
+#include <mutex>
 
 using namespace std;
 
 Sunnet *Sunnet::inst;
+
+// 使用函数局部静态变量避免静态初始化顺序问题
+unordered_map<string, std::function<shared_ptr<Service>()>>& Sunnet::GetServiceCreators()
+{
+    static unordered_map<string, std::function<shared_ptr<Service>()>> serviceCreators;
+    return serviceCreators;
+}
+
+pthread_rwlock_t& Sunnet::GetServiceCreatorsLock()
+{
+    static pthread_rwlock_t serviceCreatorsLock;
+    static std::once_flag init_flag;
+    std::call_once(init_flag, []() {
+        pthread_rwlock_init(&serviceCreatorsLock, NULL);
+    });
+    return serviceCreatorsLock;
+}
 Sunnet::Sunnet()
 {
     inst = this;
@@ -64,14 +81,37 @@ void Sunnet::Wait()
     }
 }
 
+void Sunnet::RegisterService(const string& type, std::function<shared_ptr<Service>()> creator)
+{
+    auto& serviceCreators = GetServiceCreators();
+    auto& serviceCreatorsLock = GetServiceCreatorsLock();
+    pthread_rwlock_wrlock(&serviceCreatorsLock);
+    {
+        serviceCreators[type] = creator;
+    }
+    pthread_rwlock_unlock(&serviceCreatorsLock);
+}
+
 uint32_t Sunnet::NewService(shared_ptr<string> type)
 {
     shared_ptr<Service> srv;
-    if (*type == "gateway") {
-        srv = make_shared<GatewayService>();
-    } else {
-        srv = make_shared<Service>();
+    
+    // 查找注册的服务创建器
+    auto& serviceCreators = GetServiceCreators();
+    auto& serviceCreatorsLock = GetServiceCreatorsLock();
+    pthread_rwlock_rdlock(&serviceCreatorsLock);
+    {
+        auto iter = serviceCreators.find(*type);
+        if (iter != serviceCreators.end()) {
+            // 使用注册的创建器
+            srv = iter->second();
+        } else {
+            // 默认创建基础 Service
+            srv = make_shared<Service>();
+        }
     }
+    pthread_rwlock_unlock(&serviceCreatorsLock);
+    
     srv->type = type;
     pthread_rwlock_wrlock(&servicesLock);
     {

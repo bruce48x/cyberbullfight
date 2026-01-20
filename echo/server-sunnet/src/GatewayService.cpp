@@ -1,4 +1,5 @@
 #include "GatewayService.h"
+#include "SessionManager.h"
 #include "../sunnet/include/Sunnet.h"
 #include <iostream>
 #include <sys/socket.h>
@@ -12,6 +13,13 @@ using namespace std;
 
 unordered_map<string, RouteHandler> GatewayService::handlers_;
 mutex GatewayService::handlers_mutex_;
+
+// 注册 GatewayService 到服务工厂（需要在 main 函数中调用）
+void GatewayService::register_service() {
+    Sunnet::RegisterService("gateway", []() -> shared_ptr<Service> {
+        return make_shared<GatewayService>();
+    });
+}
 
 void GatewayService::register_handler(const string& route, RouteHandler handler) {
     lock_guard<mutex> lock(handlers_mutex_);
@@ -160,7 +168,12 @@ void GatewayService::OnSocketWritable(int fd) {
 void GatewayService::OnSocketClose(int fd) {
     cout << "[GatewayService] OnSocketClose fd=" << fd << endl;
     lock_guard<mutex> lock(sessions_mutex_);
-    sessions_.erase(fd);
+    bool had_session = (sessions_.erase(fd) > 0);
+    
+    // Notify session manager of connection close (only if session existed)
+    if (had_session) {
+        SessionManager::getInstance().onConnectionClose();
+    }
 }
 
 void GatewayService::process_package(int fd, const protocol::Package& pkg) {
@@ -211,6 +224,9 @@ void GatewayService::handle_handshake_ack(int fd) {
     if (it != sessions_.end()) {
         it->second->state = ConnectionState::Working;
         it->second->last_heartbeat = chrono::steady_clock::now();
+        
+        // Notify session manager of successful handshake
+        SessionManager::getInstance().onHandshakeSuccess();
     }
 }
 

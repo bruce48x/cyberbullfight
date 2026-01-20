@@ -46,6 +46,7 @@ public:
     void OnExit() override;
 
     static void register_handler(const std::string& route, RouteHandler handler);
+    static void register_service(); // 注册 GatewayService 到服务工厂
 
 private:
     void OnAcceptMsg(shared_ptr<SocketAcceptMsg> msg) override;

@@ -5,13 +5,15 @@
 #include "SocketWorker.h"
 #include "Conn.h"
 #include <unordered_map>
-
-class GatewayService; // Forward declaration
+#include <functional>
+#include <memory>
 
 class Sunnet
 {
 public:
     static Sunnet *inst;
+    // 服务工厂：注册服务创建器
+    static void RegisterService(const string& type, std::function<shared_ptr<Service>()> creator);
 
 public:
     Sunnet();
@@ -64,4 +66,7 @@ private:
     // Conn 列表
     unordered_map<uint32_t, shared_ptr<Conn>> conns;
     pthread_rwlock_t connsLock;
+    // 服务工厂（使用函数局部静态变量避免静态初始化顺序问题）
+    static unordered_map<string, std::function<shared_ptr<Service>()>>& GetServiceCreators();
+    static pthread_rwlock_t& GetServiceCreatorsLock();
 };
