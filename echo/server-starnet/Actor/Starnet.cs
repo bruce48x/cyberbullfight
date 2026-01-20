@@ -46,6 +46,14 @@ public class Starnet
         StartSocket();
     }
 
+    private void StartSocket()
+    {
+        _socketWorker = new SocketWorker();
+        _socketWorker.Init();
+        _socketThread = new Thread(_socketWorker.Run);
+        _socketThread.Start();
+    }
+
     private void StartWorker()
     {
         for (int i = 0; i < WORKER_NUM; i++)
@@ -59,13 +67,6 @@ public class Starnet
         }
     }
 
-    private void StartSocket()
-    {
-        _socketWorker = new SocketWorker();
-        _socketWorker.Init();
-        _socketThread = new Thread(_socketWorker.Run);
-        _socketThread.Start();
-    }
 
     public void Stop()
     {
@@ -270,7 +271,7 @@ public class Starnet
         try
         {
             socket.Bind(endPoint);
-            socket.Listen(64);
+            socket.Listen(1024);
 
             int fd = socket.Handle.ToInt32();
             AddConn(fd, serviceId, ConnType.Listen);

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Pipelines;
 using System.Net.Sockets;
 
 namespace ServerCs.Actor;
@@ -6,7 +7,6 @@ namespace ServerCs.Actor;
 public class SocketWorker
 {
     private readonly ConcurrentDictionary<int, SocketEvent> _events = new();
-    private readonly AutoResetEvent _eventSignal = new(false);
     private volatile bool _running = true;
 
     public void Init()
@@ -17,16 +17,17 @@ public class SocketWorker
     public void Stop()
     {
         _running = false;
-        _eventSignal.Set(); // Wake up if waiting
     }
 
     public void Run()
     {
+        Console.WriteLine("[SocketWorker] Started");
         while (_running)
         {
             ProcessEvents();
             Thread.Sleep(1); // Small delay to prevent CPU spinning
         }
+        Console.WriteLine("[SocketWorker] Stopped");
     }
 
     private void ProcessEvents()
@@ -119,46 +120,70 @@ public class SocketWorker
         var listenSocket = Starnet.Instance.GetSocket(conn.Fd);
         if (listenSocket == null) return;
 
-        try
+        // Accept all pending connections in a loop
+        // This is critical when multiple connections arrive simultaneously
+        while (true)
         {
-            var clientSocket = listenSocket.Accept();
-            if (clientSocket == null) return;
-
-            clientSocket.Blocking = false;
-            clientSocket.NoDelay = true;
-
-            int clientFd = clientSocket.Handle.ToInt32();
-            Starnet.Instance.AddConn(clientFd, conn.ServiceId, ConnType.Client);
-            Starnet.Instance.RegisterSocket(clientFd, clientSocket);
-            AddEvent(clientFd);
-
-            var msg = new SocketAcceptMsg
+            try
             {
-                Type = MsgType.SocketAccept,
-                ListenFd = conn.Fd,
-                ClientFd = clientFd
-            };
-            Starnet.Instance.Send(conn.ServiceId, msg);
-        }
-        catch (SocketException ex)
-        {
-            if (ex.SocketErrorCode != SocketError.WouldBlock)
+                var clientSocket = listenSocket.Accept();
+                if (clientSocket == null) break;
+
+                clientSocket.Blocking = false;
+                clientSocket.NoDelay = true;
+
+                int clientFd = clientSocket.Handle.ToInt32();
+                Starnet.Instance.AddConn(clientFd, conn.ServiceId, ConnType.Client);
+                Starnet.Instance.RegisterSocket(clientFd, clientSocket);
+                AddEvent(clientFd);
+
+                var msg = new SocketAcceptMsg
+                {
+                    Type = MsgType.SocketAccept,
+                    ListenFd = conn.Fd,
+                    ClientFd = clientFd
+                };
+                Starnet.Instance.Send(conn.ServiceId, msg);
+            }
+            catch (SocketException ex)
             {
-                Console.WriteLine($"OnAccept error: {ex.Message}");
+                if (ex.SocketErrorCode == SocketError.WouldBlock)
+                {
+                    // No more connections to accept
+                    break;
+                }
+                Console.WriteLine($"OnAccept error: {ex.Message}, SocketErrorCode: {ex.SocketErrorCode}");
+                break;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"OnAccept unexpected error: {ex.Message}");
+                break;
             }
         }
     }
 
     private void OnRW(Conn conn, bool r, bool w)
     {
-        var msg = new SocketRWMsg
+        int fd = conn.Fd;
+        var socket = Starnet.Instance.GetSocket(fd);
+        if (socket == null) return;
+
+        // Get the service (should be GatewayService)
+        var service = Starnet.Instance.GetService(conn.ServiceId);
+        if (service is GatewayService gatewayService)
         {
-            Type = MsgType.SocketRW,
-            Fd = conn.Fd,
-            IsRead = r,
-            IsWrite = w
-        };
-        Starnet.Instance.Send(conn.ServiceId, msg);
+            if (r)
+            {
+                // Read from socket and write to Pipe
+                gatewayService.OnSocketRead(fd, socket);
+            }
+            if (w)
+            {
+                // Write from Pipe to socket (if needed)
+                gatewayService.OnSocketWrite(fd, socket);
+            }
+        }
     }
 
     private class SocketEvent

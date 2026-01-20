@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Collections.Concurrent;
+using System.IO.Pipelines;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -63,6 +65,34 @@ public class GatewayService : Service
         }
     }
 
+    private bool TryReadPackage(ref ReadOnlySequence<byte> buffer, out Package? pkg)
+    {
+        pkg = null;
+
+        if (buffer.Length < 4)
+            return false;
+
+        Span<byte> lenBytes = stackalloc byte[4];
+        buffer.Slice(0, 4).CopyTo(lenBytes);
+        byte type = lenBytes[0];
+        int bodyLen = (lenBytes[1] << 16) |
+                      (lenBytes[2] << 8) |
+                      lenBytes[3];
+
+        if (buffer.Length < 4 + bodyLen)
+            return false;
+
+        pkg = new Package
+        {
+            Type = type,
+            Length = bodyLen,
+            Body = buffer.Slice(4, bodyLen).ToArray()
+        };
+        buffer = buffer.Slice(4 + bodyLen);
+
+        return true;
+    }
+
     public override void OnExit()
     {
         Console.WriteLine($"[GatewayService] OnExit id={Id}");
@@ -73,6 +103,14 @@ public class GatewayService : Service
         {
             foreach (var pair in _sessions)
             {
+                // Complete pipes
+                try
+                {
+                    pair.Value.Pipe.Writer.Complete();
+                    pair.Value.Pipe.Reader.Complete();
+                }
+                catch { }
+                
                 Starnet.Instance.CloseConn(pair.Key);
             }
             _sessions.Clear();
@@ -84,136 +122,164 @@ public class GatewayService : Service
         int clientFd = msg.ClientFd;
         Console.WriteLine($"[GatewayService] OnAcceptMsg clientFd={clientFd}");
 
+        var socket = Starnet.Instance.GetSocket(clientFd);
+        if (socket != null)
+        {
+            socket.NoDelay = true;
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+        }
+
+        // Create session with Pipe
         var session = new Session
         {
             Fd = clientFd,
             State = ConnectionState.Inited,
-            LastHeartbeat = DateTime.UtcNow
+            LastHeartbeat = DateTime.UtcNow,
+            Pipe = new Pipe()
         };
-
         _sessions[clientFd] = session;
+
+        // Start processing packets from Pipe in background
+        _ = Task.Run(async () => await ProcessPacketsAsync(clientFd, session.Pipe.Reader));
     }
 
     protected override void OnRWMsg(SocketRWMsg msg)
     {
         int fd = msg.Fd;
+        var socket = Starnet.Instance.GetSocket(fd);
+        if (socket == null) return;
+
         if (msg.IsRead)
         {
-            const int BUFFSIZE = 4096;
-            byte[] buff = new byte[BUFFSIZE];
-            int len = 0;
-
-            try
-            {
-                var socket = Starnet.Instance.GetSocket(fd);
-                if (socket == null) return;
-
-                do
-                {
-                    len = socket.Receive(buff, 0, BUFFSIZE, SocketFlags.None);
-                    if (len > 0)
-                    {
-                        OnSocketData(fd, buff, len);
-                    }
-                } while (len == BUFFSIZE && socket.Available > 0);
-            }
-            catch (SocketException ex)
-            {
-                if (ex.SocketErrorCode != SocketError.WouldBlock &&
-                    ex.SocketErrorCode != SocketError.TimedOut)
-                {
-                    if (_sessions.ContainsKey(fd))
-                    {
-                        OnSocketClose(fd);
-                        Starnet.Instance.CloseConn(fd);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[GatewayService] Read error: {ex.Message}");
-                if (_sessions.ContainsKey(fd))
-                {
-                    OnSocketClose(fd);
-                    Starnet.Instance.CloseConn(fd);
-                }
-            }
+            OnSocketRead(fd, socket);
         }
 
         if (msg.IsWrite)
         {
-            if (_sessions.ContainsKey(fd))
-            {
-                OnSocketWritable(fd);
-            }
+            OnSocketWrite(fd, socket);
         }
     }
 
-    protected override void OnSocketData(int fd, byte[] buff, int len)
+    public void OnSocketRead(int fd, System.Net.Sockets.Socket socket)
     {
-        Session? session;
-        lock (_sessionsLock)
+        if (!_sessions.TryGetValue(fd, out var session))
         {
-            if (!_sessions.TryGetValue(fd, out session))
-            {
-                Console.WriteLine($"[GatewayService] Session not found for fd={fd}");
-                return;
-            }
-            session.DataBuf.AddRange(buff.Take(len));
+            return;
         }
 
-        // Process complete packages
-        while (true)
-        {
-            List<byte>? pkgData = null;
-            bool hasPackage = false;
+        const int minimumBufferSize = 1024;
+        var writer = session.Pipe.Writer;
 
-            lock (_sessionsLock)
+        try
+        {
+            // Read available data in non-blocking way
+            while (true)
             {
-                if (!_sessions.TryGetValue(fd, out session))
+                var memory = writer.GetMemory(minimumBufferSize);
+                int bytesRead;
+                
+                try
                 {
+                    bytesRead = socket.Receive(memory.Span, SocketFlags.None);
+                }
+                catch (SocketException ex)
+                {
+                    if (ex.SocketErrorCode == SocketError.WouldBlock ||
+                        ex.SocketErrorCode == SocketError.TimedOut)
+                    {
+                        // No more data available
+                        break;
+                    }
+                    else
+                    {
+                        // Error occurred
+                        writer.Complete(ex);
+                        OnSocketClose(fd);
+                        Starnet.Instance.CloseConn(fd);
+                        return;
+                    }
+                }
+                
+                if (bytesRead == 0)
+                {
+                    // Connection closed
+                    writer.Complete();
+                    OnSocketClose(fd);
+                    Starnet.Instance.CloseConn(fd);
                     return;
                 }
 
-                if (session.DataBuf.Count >= 4)
-                {
-                    int pkgType = session.DataBuf[0];
-                    int pkgLen = (session.DataBuf[1] << 16) | (session.DataBuf[2] << 8) | session.DataBuf[3];
-                    int totalLen = 4 + pkgLen;
+                // Tell the PipeWriter how much was read
+                writer.Advance(bytesRead);
 
-                    if (session.DataBuf.Count >= totalLen)
-                    {
-                        pkgData = session.DataBuf.Take(totalLen).ToList();
-                        session.DataBuf.RemoveRange(0, totalLen);
-                        hasPackage = true;
-                    }
+                // Flush to make data available to reader
+                var flushResult = writer.FlushAsync().AsTask().GetAwaiter().GetResult();
+                if (flushResult.IsCompleted)
+                {
+                    break;
                 }
-            }
 
-            if (!hasPackage)
-            {
-                break;
-            }
-
-            if (pkgData != null)
-            {
-                var pkg = Package.Decode(pkgData.ToArray());
-                if (pkg != null)
+                // Check if more data is available
+                if (socket.Available == 0)
                 {
-                    ProcessPackage(fd, pkg);
-                }
-                else
-                {
-                    Console.WriteLine("[GatewayService] Failed to decode package");
+                    break;
                 }
             }
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[GatewayService] OnSocketRead error fd={fd}: {ex.Message}");
+            writer.Complete(ex);
+            OnSocketClose(fd);
+            Starnet.Instance.CloseConn(fd);
+        }
     }
 
-    protected override void OnSocketWritable(int fd)
+    public void OnSocketWrite(int fd, System.Net.Sockets.Socket socket)
     {
-        // Handle write buffer if needed
+        // Handle write buffer if needed in the future
+        // For now, we send directly in SendAsync
     }
+
+    private async Task ProcessPacketsAsync(int fd, PipeReader reader)
+    {
+        try
+        {
+            while (true)
+            {
+                ReadResult result = await reader.ReadAsync();
+                var buffer = result.Buffer;
+
+                if (result.IsCompleted && buffer.Length == 0)
+                {
+                    break;
+                }
+
+                // Process complete packages
+                while (TryReadPackage(ref buffer, out var package))
+                {
+                    ProcessPackage(fd, package);
+                }
+
+                // Tell the PipeReader how much of the buffer we consumed
+                reader.AdvanceTo(buffer.Start, buffer.End);
+
+                if (result.IsCompleted)
+                {
+                    break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[GatewayService] ProcessPacketsAsync error fd={fd}: {ex.Message}");
+        }
+        finally
+        {
+            await reader.CompleteAsync();
+        }
+    }
+
 
     protected override void OnSocketClose(int fd)
     {
@@ -226,13 +292,13 @@ public class GatewayService : Service
         switch (pkg.Type)
         {
             case PackageType.Handshake:
-                HandleHandshake(fd, pkg.Body);
+                _ = HandleHandshakeAsync(fd, pkg.Body);
                 break;
             case PackageType.HandshakeAck:
                 HandleHandshakeAck(fd);
                 break;
             case PackageType.Heartbeat:
-                HandleHeartbeat(fd);
+                _ = HandleHeartbeatAsync(fd);
                 break;
             case PackageType.Data:
                 HandleData(fd, pkg.Body);
@@ -247,14 +313,14 @@ public class GatewayService : Service
         }
     }
 
-    private void HandleHandshake(int fd, byte[] body)
+    private async Task HandleHandshakeAsync(int fd, byte[] body)
     {
         Console.WriteLine($"[GatewayService] handle_handshake fd={fd}");
         string response = "{\"code\":200,\"sys\":{\"heartbeat\":10,\"dict\":{},\"protos\":{\"client\":{},\"server\":{}}},\"user\":{}}";
         byte[] responseBody = Encoding.UTF8.GetBytes(response);
         byte[] responsePkg = Package.Encode(PackageType.Handshake, responseBody);
         Console.WriteLine($"[GatewayService] Sending handshake response, size={responsePkg.Length}");
-        Send(fd, responsePkg);
+        await SendAsync(fd, responsePkg);
 
         lock (_sessionsLock)
         {
@@ -280,7 +346,7 @@ public class GatewayService : Service
         }
     }
 
-    private void HandleHeartbeat(int fd)
+    private async Task HandleHeartbeatAsync(int fd)
     {
         lock (_sessionsLock)
         {
@@ -291,7 +357,7 @@ public class GatewayService : Service
         }
 
         byte[] heartbeatPkg = Package.Encode(PackageType.Heartbeat, null);
-        Send(fd, heartbeatPkg);
+        await SendAsync(fd, heartbeatPkg);
     }
 
     private void HandleData(int fd, byte[] body)
@@ -314,7 +380,7 @@ public class GatewayService : Service
         string msgBody = msg.Body.Length > 0 ? Encoding.UTF8.GetString(msg.Body) : "{}";
         if (msg.Type == MessageType.Request)
         {
-            HandleRequest(fd, msg.Id, msg.Route, msgBody);
+            _ = HandleRequestAsync(fd, msg.Id, msg.Route, msgBody);
         }
         else if (msg.Type == MessageType.Notify)
         {
@@ -326,65 +392,69 @@ public class GatewayService : Service
         }
     }
 
-    private void HandleRequest(int fd, int id, string route, string body)
+    private async Task HandleRequestAsync(int fd, int id, string route, string body)
     {
         Console.WriteLine($"[GatewayService] handle_request fd={fd}, id={id}, route={route}, body={body}");
         string responseBody;
+        RouteHandler? handler = null;
+        Session? session = null;
 
+        // Get handler and session outside of async operations
         lock (HandlersLock)
         {
-            if (Handlers.TryGetValue(route, out var handler))
-            {
-                Session? session;
-                lock (_sessionsLock)
-                {
-                    if (!_sessions.TryGetValue(fd, out session))
-                    {
-                        Console.WriteLine($"[GatewayService] Session not found for fd={fd}");
-                        return;
-                    }
-                }
+            Handlers.TryGetValue(route, out handler);
+        }
 
-                JsonElement bodyJson;
-                try
-                {
-                    if (!string.IsNullOrEmpty(body))
-                    {
-                        bodyJson = JsonDocument.Parse(body).RootElement;
-                    }
-                    else
-                    {
-                        bodyJson = JsonDocument.Parse("{}").RootElement;
-                    }
-                }
-                catch (JsonException ex)
-                {
-                    Console.WriteLine($"[GatewayService] Failed to parse JSON body: {ex.Message}");
-                    string errorResponseBody = "{\"code\":400,\"msg\":\"Invalid JSON\"}";
-                    byte[] errorResponseBytes = Encoding.UTF8.GetBytes(errorResponseBody);
-                    byte[] errorResponseMsg = Message.Encode(id, MessageType.Response, false, "", errorResponseBytes);
-                    byte[] errorResponsePkg = Package.Encode(PackageType.Data, errorResponseMsg);
-                    Console.WriteLine($"[GatewayService] Sending error response, pkg_size={errorResponsePkg.Length}");
-                    Send(fd, errorResponsePkg);
-                    return;
-                }
-
-                responseBody = handler(session, bodyJson);
-            }
-            else
+        lock (_sessionsLock)
+        {
+            if (!_sessions.TryGetValue(fd, out session))
             {
-                Console.WriteLine($"[GatewayService] Unknown route: {route}");
-                responseBody = $"{{\"code\":404,\"msg\":\"Route not found: {route}\"}}";
+                Console.WriteLine($"[GatewayService] Session not found for fd={fd}");
+                return;
             }
+        }
+
+        if (handler != null)
+        {
+            JsonElement bodyJson;
+            try
+            {
+                if (!string.IsNullOrEmpty(body))
+                {
+                    bodyJson = JsonDocument.Parse(body).RootElement;
+                }
+                else
+                {
+                    bodyJson = JsonDocument.Parse("{}").RootElement;
+                }
+            }
+            catch (JsonException ex)
+            {
+                Console.WriteLine($"[GatewayService] Failed to parse JSON body: {ex.Message}");
+                string errorResponseBody = "{\"code\":400,\"msg\":\"Invalid JSON\"}";
+                byte[] errorResponseBytes = Encoding.UTF8.GetBytes(errorResponseBody);
+                byte[] errorResponseMsg = Message.Encode(id, MessageType.Response, false, "", errorResponseBytes);
+                byte[] errorResponsePkg = Package.Encode(PackageType.Data, errorResponseMsg);
+                Console.WriteLine($"[GatewayService] Sending error response, pkg_size={errorResponsePkg.Length}");
+                await SendAsync(fd, errorResponsePkg);
+                return;
+            }
+
+            responseBody = handler(session, bodyJson);
+        }
+        else
+        {
+            Console.WriteLine($"[GatewayService] Unknown route: {route}");
+            responseBody = $"{{\"code\":404,\"msg\":\"Route not found: {route}\"}}";
         }
 
         byte[] responseBytes = Encoding.UTF8.GetBytes(responseBody);
         byte[] responseMsg = Message.Encode(id, MessageType.Response, false, "", responseBytes);
         byte[] responsePkg = Package.Encode(PackageType.Data, responseMsg);
-        Send(fd, responsePkg);
+        await SendAsync(fd, responsePkg);
     }
 
-    private void Send(int fd, byte[] data)
+    private async Task SendAsync(int fd, byte[] data)
     {
         try
         {
@@ -394,41 +464,20 @@ public class GatewayService : Service
             int sent = 0;
             while (sent < data.Length)
             {
-                try
+                int n = await socket.SendAsync(new ArraySegment<byte>(data, sent, data.Length - sent), SocketFlags.None);
+                if (n <= 0)
                 {
-                    int n = socket.Send(data, sent, data.Length - sent, SocketFlags.None);
-                    if (n <= 0)
-                    {
-                        Console.WriteLine($"[GatewayService] Send returned 0, fd={fd}");
-                        OnSocketClose(fd);
-                        Starnet.Instance.CloseConn(fd);
-                        return;
-                    }
-                    sent += n;
-                }
-                catch (SocketException ex)
-                {
-                    if (ex.SocketErrorCode == SocketError.WouldBlock)
-                    {
-                        Console.WriteLine($"[GatewayService] Send would block, fd={fd}, sent={sent}/{data.Length}");
-                        // TODO: Add to write buffer and enable EPOLLOUT
-                        return;
-                    }
-                    Console.WriteLine($"[GatewayService] Send error: {ex.SocketErrorCode}, fd={fd}");
+                    Console.WriteLine($"[GatewayService] Send returned 0, fd={fd}");
                     OnSocketClose(fd);
                     Starnet.Instance.CloseConn(fd);
                     return;
                 }
+                sent += n;
             }
         }
         catch (SocketException ex)
         {
-            if (ex.SocketErrorCode == SocketError.WouldBlock)
-            {
-                Console.WriteLine($"[GatewayService] Send would block, fd={fd}");
-                return;
-            }
-            Console.WriteLine($"[GatewayService] Send error: {ex.Message}, fd={fd}");
+            Console.WriteLine($"[GatewayService] Send error: {ex.SocketErrorCode}, fd={fd}");
             OnSocketClose(fd);
             Starnet.Instance.CloseConn(fd);
         }
@@ -440,10 +489,16 @@ public class GatewayService : Service
         }
     }
 
-    private void SendHeartbeat(int fd)
+    private void Send(int fd, byte[] data)
+    {
+        // Fire and forget - send asynchronously
+        _ = SendAsync(fd, data);
+    }
+
+    private async Task SendHeartbeatAsync(int fd)
     {
         byte[] heartbeatPkg = Package.Encode(PackageType.Heartbeat, null);
-        Send(fd, heartbeatPkg);
+        await SendAsync(fd, heartbeatPkg);
     }
 
     private void CheckHeartbeatTimeout()
@@ -465,7 +520,7 @@ public class GatewayService : Service
                     }
                     else if (elapsed >= session.HeartbeatInterval)
                     {
-                        SendHeartbeat(pair.Key);
+                        _ = SendHeartbeatAsync(pair.Key);
                     }
                 }
             }

@@ -1,6 +1,6 @@
 services:
   server:
-    image: bruce48li/cyberbullfight-server-cpp
+    image: bruce48li/cyberbullfight-server-starnet
     environment:
       - TZ=Asia/Shanghai
     ports:
@@ -12,6 +12,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - SERVER_HOST=server
+      - COUNT=1000
     depends_on:
       - server
     networks:

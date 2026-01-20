@@ -104,7 +104,7 @@ docker run -d \
 将 `benchmark.sh` 和 `analyze_csv.py` 上传到服务器后，执行以下命令
 
 ```sh
-# 服务端
+# 服务端 ( go )
 nohup ./benchmark.sh -n server-go \
 -i bruce48li/cyberbullfight-server-go \
 -d 70 > benchmark.log 2>&1 &
@@ -112,9 +112,29 @@ nohup ./benchmark.sh -n server-go \
 # 客户端
 nohup ./benchmark.sh -n client-go \
 -i bruce48li/cyberbullfight-client-go \
--e "SERVER_HOST=172.20.3.227" \
+-e "SERVER_HOST=172.20.3.179" \
 -e "COUNT=1000" \
 -d 60 > benchmark.log 2>&1 &
+
+# 服务端 ( node.js )
+nohup ./benchmark.sh -n server-pinus \
+-i bruce48li/cyberbullfight-server-pinus \
+-d 70 > benchmark.log 2>&1 &
+
+# 服务端 ( lua )
+nohup ./benchmark.sh -n server-skynet \
+-i bruce48li/cyberbullfight-server-skynet \
+-d 70 > benchmark.log 2>&1 &
+
+# 服务端 ( c# )
+nohup ./benchmark.sh -n server-starnet \
+-i bruce48li/cyberbullfight-server-starnet \
+-d 70 > benchmark.log 2>&1 &
+
+# 服务端 ( c++ )
+nohup ./benchmark.sh -n server-sunnet \
+-i bruce48li/cyberbullfight-server-sunnet \
+-d 70 > benchmark.log 2>&1 &
 ```
 
 # 测试
