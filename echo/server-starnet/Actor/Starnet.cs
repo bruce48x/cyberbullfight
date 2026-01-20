@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using ServerCs.Actor.Message;
 
 namespace ServerCs.Actor;
 
@@ -96,28 +97,31 @@ public class Starnet
         _socketThread?.Join();
     }
 
-    public uint NewService(string type)
+    public uint NewService<T>(string type) where T : Service, new()
     {
-        Service srv;
-        if (type == "gateway")
-        {
-            srv = new GatewayService();
-        }
-        else
-        {
-            srv = new Service();
-        }
-        srv.Type = type;
+        Service srv = new T();
+        return NewService(type, srv);
+    }
+
+    public uint NewService(string type, Service service)
+    {
+        service.Type = type;
 
         lock (_servicesLock)
         {
-            srv.Id = _maxId;
+            service.Id = _maxId;
             _maxId++;
-            _services[srv.Id] = srv;
+            _services[service.Id] = service;
         }
 
-        srv.OnInit();
-        return srv.Id;
+        service.OnInit();
+        return service.Id;
+    }
+
+    public uint NewService(string type)
+    {
+        // Default implementation creates a base Service
+        return NewService<Service>(type);
     }
 
     public Service? GetService(uint id)

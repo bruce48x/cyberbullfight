@@ -8,17 +8,11 @@ var starnet = new Starnet();
 starnet.Start();
 
 // Create gateway service
-uint gatewayId = starnet.NewService("gateway");
-
-// Listen on port
-int listenFd = starnet.Listen(Port, gatewayId);
-if (listenFd < 0)
+var gatewayService = new GatewayService
 {
-    Console.WriteLine("[main] Failed to listen on port");
-    return;
-}
-
-Console.WriteLine($"[main] Server listening on port {Port}");
+    Port = Port
+};
+uint gatewayId = starnet.NewService("gateway", gatewayService);
 
 // Register handlers
 GatewayService.RegisterHandler("connector.entryHandler.hello", (session, body) =>

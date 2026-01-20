@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
-using System.IO.Pipelines;
 using System.Net.Sockets;
+using ServerCs.Actor.Message;
 
 namespace ServerCs.Actor;
 
@@ -22,15 +22,31 @@ public class SocketWorker
     public void Run()
     {
         Console.WriteLine("[SocketWorker] Started");
+        int emptyLoops = 0;
         while (_running)
         {
-            ProcessEvents();
-            Thread.Sleep(1); // Small delay to prevent CPU spinning
+            bool hadEvents = ProcessEvents();
+            
+            // Adaptive sleep: if no events, gradually increase sleep time
+            // If events were processed, reset counter for immediate next check
+            if (!hadEvents)
+            {
+                emptyLoops++;
+                if (emptyLoops > 10)
+                {
+                    Thread.Sleep(1); // Sleep only after many empty loops
+                    emptyLoops = 0;
+                }
+            }
+            else
+            {
+                emptyLoops = 0;
+            }
         }
         Console.WriteLine("[SocketWorker] Stopped");
     }
 
-    private void ProcessEvents()
+    private bool ProcessEvents()
     {
         var socketsToCheck = new List<System.Net.Sockets.Socket>();
         var fdsToCheck = new List<int>();
@@ -46,18 +62,23 @@ public class SocketWorker
 
         if (socketsToCheck.Count == 0)
         {
-            return;
+            return false;
         }
 
+        bool hadEvents = false;
         try
         {
-            if (socketsToCheck.Count == 0) return;
-
             var readList = new List<System.Net.Sockets.Socket>(socketsToCheck);
             var writeList = new List<System.Net.Sockets.Socket>();
             var errorList = new List<System.Net.Sockets.Socket>(socketsToCheck);
 
-            System.Net.Sockets.Socket.Select(readList, writeList, errorList, 1); // 1ms timeout
+            // Use 0 timeout for non-blocking select to maximize throughput
+            System.Net.Sockets.Socket.Select(readList, writeList, errorList, 0);
+            
+            if (readList.Count > 0 || writeList.Count > 0)
+            {
+                hadEvents = true;
+            }
 
             foreach (var socket in readList)
             {
@@ -89,6 +110,8 @@ public class SocketWorker
         {
             Console.WriteLine($"SocketWorker error: {ex.Message}");
         }
+        
+        return hadEvents;
     }
 
     public void AddEvent(int fd)
@@ -116,12 +139,12 @@ public class SocketWorker
 
     private void OnAccept(Conn conn)
     {
-        Console.WriteLine($"OnAccept fd: {conn.Fd}");
         var listenSocket = Starnet.Instance.GetSocket(conn.Fd);
         if (listenSocket == null) return;
 
         // Accept all pending connections in a loop
         // This is critical when multiple connections arrive simultaneously
+        int acceptedCount = 0;
         while (true)
         {
             try
@@ -131,6 +154,7 @@ public class SocketWorker
 
                 clientSocket.Blocking = false;
                 clientSocket.NoDelay = true;
+                clientSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
 
                 int clientFd = clientSocket.Handle.ToInt32();
                 Starnet.Instance.AddConn(clientFd, conn.ServiceId, ConnType.Client);
@@ -144,6 +168,7 @@ public class SocketWorker
                     ClientFd = clientFd
                 };
                 Starnet.Instance.Send(conn.ServiceId, msg);
+                acceptedCount++;
             }
             catch (SocketException ex)
             {
@@ -161,29 +186,25 @@ public class SocketWorker
                 break;
             }
         }
+        
+        if (acceptedCount > 0)
+        {
+            Console.WriteLine($"[SocketWorker] OnAccept accepted {acceptedCount} connections");
+        }
     }
 
     private void OnRW(Conn conn, bool r, bool w)
     {
-        int fd = conn.Fd;
-        var socket = Starnet.Instance.GetSocket(fd);
-        if (socket == null) return;
-
-        // Get the service (should be GatewayService)
-        var service = Starnet.Instance.GetService(conn.ServiceId);
-        if (service is GatewayService gatewayService)
+        // Send message to service instead of directly calling service methods
+        // This keeps SocketWorker decoupled from specific Service implementations
+        var msg = new SocketRWMsg
         {
-            if (r)
-            {
-                // Read from socket and write to Pipe
-                gatewayService.OnSocketRead(fd, socket);
-            }
-            if (w)
-            {
-                // Write from Pipe to socket (if needed)
-                gatewayService.OnSocketWrite(fd, socket);
-            }
-        }
+            Type = MsgType.SocketRW,
+            Fd = conn.Fd,
+            IsRead = r,
+            IsWrite = w
+        };
+        Starnet.Instance.Send(conn.ServiceId, msg);
     }
 
     private class SocketEvent

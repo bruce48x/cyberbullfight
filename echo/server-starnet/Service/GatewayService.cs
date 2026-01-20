@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using ServerCs.Protocol;
+using ServerCs.Actor.Message;
 
 namespace ServerCs.Actor;
 
@@ -20,6 +21,8 @@ public class GatewayService : Service
 
     private volatile bool _heartbeatRunning = true;
     private Thread? _heartbeatThread;
+    
+    public uint Port { get; set; } = 3010; // Default port
 
     public GatewayService()
     {
@@ -45,6 +48,16 @@ public class GatewayService : Service
     public override void OnInit()
     {
         Console.WriteLine($"[GatewayService] OnInit id={Id}");
+        
+        // Start listening on port - this is the actor's responsibility
+        int listenFd = Starnet.Instance.Listen(Port, Id);
+        if (listenFd < 0)
+        {
+            Console.WriteLine($"[GatewayService] Failed to listen on port {Port}");
+            return;
+        }
+        
+        Console.WriteLine($"[GatewayService] Server listening on port {Port}");
     }
 
     public override void OnMsg(BaseMsg msg)
@@ -141,6 +154,13 @@ public class GatewayService : Service
 
         // Start processing packets from Pipe in background
         _ = Task.Run(async () => await ProcessPacketsAsync(clientFd, session.Pipe.Reader));
+        
+        // Immediately check for incoming data (handshake packet)
+        // Client may have already sent handshake before we detect socket readable
+        if (socket != null && socket.Available > 0)
+        {
+            OnSocketRead(clientFd, socket);
+        }
     }
 
     protected override void OnRWMsg(SocketRWMsg msg)
@@ -211,19 +231,26 @@ public class GatewayService : Service
 
                 // Tell the PipeWriter how much was read
                 writer.Advance(bytesRead);
-
-                // Flush to make data available to reader
+            }
+            
+            // Flush all data to make it available to reader
+            // Do this after reading loop to avoid blocking in the loop
+            try
+            {
                 var flushResult = writer.FlushAsync().AsTask().GetAwaiter().GetResult();
                 if (flushResult.IsCompleted)
                 {
-                    break;
+                    // Pipe is completed, stop reading
+                    return;
                 }
-
-                // Check if more data is available
-                if (socket.Available == 0)
-                {
-                    break;
-                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GatewayService] Flush error fd={fd}: {ex.Message}");
+                writer.Complete(ex);
+                OnSocketClose(fd);
+                Starnet.Instance.CloseConn(fd);
+                return;
             }
         }
         catch (Exception ex)
@@ -370,7 +397,7 @@ public class GatewayService : Service
             }
         }
 
-        var msg = Message.Decode(body);
+        var msg = Protocol.Message.Decode(body);
         if (msg == null)
         {
             Console.WriteLine($"[GatewayService] Failed to decode message, body_size={body.Length}");
@@ -433,7 +460,7 @@ public class GatewayService : Service
                 Console.WriteLine($"[GatewayService] Failed to parse JSON body: {ex.Message}");
                 string errorResponseBody = "{\"code\":400,\"msg\":\"Invalid JSON\"}";
                 byte[] errorResponseBytes = Encoding.UTF8.GetBytes(errorResponseBody);
-                byte[] errorResponseMsg = Message.Encode(id, MessageType.Response, false, "", errorResponseBytes);
+                byte[] errorResponseMsg = Protocol.Message.Encode(id, MessageType.Response, false, "", errorResponseBytes);
                 byte[] errorResponsePkg = Package.Encode(PackageType.Data, errorResponseMsg);
                 Console.WriteLine($"[GatewayService] Sending error response, pkg_size={errorResponsePkg.Length}");
                 await SendAsync(fd, errorResponsePkg);
@@ -449,7 +476,7 @@ public class GatewayService : Service
         }
 
         byte[] responseBytes = Encoding.UTF8.GetBytes(responseBody);
-        byte[] responseMsg = Message.Encode(id, MessageType.Response, false, "", responseBytes);
+        byte[] responseMsg = Protocol.Message.Encode(id, MessageType.Response, false, "", responseBytes);
         byte[] responsePkg = Package.Encode(PackageType.Data, responseMsg);
         await SendAsync(fd, responsePkg);
     }
