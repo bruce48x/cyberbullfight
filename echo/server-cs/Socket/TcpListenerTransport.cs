@@ -19,7 +19,7 @@ public class TcpListenerTransport : IListener
     public async Task StartAsync(CancellationToken ct)
     {
         _listen.Bind(_endpoint);
-        _listen.Listen(1024 * 16);
+        _listen.Listen(256);
         while (!ct.IsCancellationRequested)
         {
             System.Net.Sockets.Socket accepted;

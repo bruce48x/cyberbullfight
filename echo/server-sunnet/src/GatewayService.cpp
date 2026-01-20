@@ -267,7 +267,6 @@ void GatewayService::handle_data(int fd, const vector<uint8_t>& body) {
 }
 
 void GatewayService::handle_request(int fd, int id, const string& route, const string& body) {
-    cout << "[GatewayService] handle_request fd=" << fd << ", id=" << id << ", route=" << route << ", body=" << body << endl;
     string response_body;
 
     lock_guard<mutex> lock(handlers_mutex_);
